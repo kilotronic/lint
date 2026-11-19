@@ -39,7 +39,8 @@ Linux and macOS runners, x86_64 or arm64.
   ```
 - **shellcheck options:** a `.shellcheckrc` in the repository applies as usual.
 - **A line that can't carry its own pin:** for example a Docker build context whose digest the build
-  command supplies. End the line with `# unpinned-ok: <reason>`, and the pinned check passes it.
+  command supplies. Say why with `# unpinned-ok: <reason>`: at the end of the workflow's `uses:` line, or
+  on its own line just above the Dockerfile's `FROM` (Docker allows comments only on their own line).
 
 ## Inputs
 
