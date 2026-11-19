@@ -104,8 +104,8 @@ cmd_actionlint() {
 
 # Every action a workflow uses is pinned to a full commit SHA (a tag or branch can be moved to other code),
 # and every Docker base image to a digest. Local actions (./...) and earlier build stages are fine. A line that
-# can't carry the pin itself (e.g. a build context whose digest the build command supplies) says why:
-# "# unpinned-ok: <reason>".
+# can't carry the pin itself says why with "# unpinned-ok: <reason>": at the end of a workflow's uses: line, or
+# on the line just above a Dockerfile's FROM (a Dockerfile allows comments only on their own line).
 cmd_pinned() {
   local bad=0 f line n
   while IFS= read -r -d '' f; do
@@ -126,7 +126,7 @@ cmd_pinned() {
   done < <(git ls-files -z -- '.github/workflows/*.yml' '.github/workflows/*.yaml' 'action.yml' 'action.yaml' \
     '**/action.yml' '**/action.yaml' ${EXCLUDE_GLOBS[@]+"${EXCLUDE_GLOBS[@]}"})
   while IFS= read -r -d '' f; do
-    local stages=" " n=0
+    local stages=" " n=0 prev=""
     while IFS= read -r line || [ -n "$line" ]; do
       n=$((n + 1))
       shopt -s nocasematch
@@ -134,13 +134,14 @@ cmd_pinned() {
         local image="${BASH_REMATCH[2]}" alias="${BASH_REMATCH[4]}"
         shopt -u nocasematch
         if [[ "$image" != *@sha256:* && "$image" != scratch && "$stages" != *" $image "* && "$image" != *'$'* \
-          && "$line" != *"# unpinned-ok:"* ]]; then
+          && "$prev" != *"# unpinned-ok:"* ]]; then
           echo "$f:$n: base image not pinned to a digest (image@sha256:...): $image"
           bad=1
         fi
         [ -n "$alias" ] && stages="$stages$alias "
       fi
       shopt -u nocasematch
+      prev="$line"
     done <"$f"
   done < <(git ls-files -z -- '**Dockerfile*' '*.Dockerfile' '**/*.Dockerfile' 'Dockerfile*' ${EXCLUDE_GLOBS[@]+"${EXCLUDE_GLOBS[@]}"})
   [ "$bad" = 0 ] && echo "pinned: every action is pinned to a commit SHA and every base image to a digest"

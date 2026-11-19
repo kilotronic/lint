@@ -56,7 +56,7 @@ jobs:
       - name: pinned accepts an explained exception and a build stage
         working-directory: scratch
         run: |
-          printf 'FROM python:3.13-slim@sha256:%s AS base\nFROM base\nFROM ctx # unpinned-ok: digest set by the build command\n' \
+          printf 'FROM python:3.13-slim@sha256:%s AS base\nFROM base\n# unpinned-ok: digest set by the build command\nFROM ctx\n' \
             "$(printf '0%.0s' $(seq 64))" > Dockerfile
           printf 'on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: ./local\n      - uses: actions/checkout@%s\n' \
             "$(printf 'a%.0s' $(seq 40))" > .github/workflows/w.yml
