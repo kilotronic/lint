@@ -1,0 +1,84 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  # This repository's own files: nothing to find.
+  dogfood:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: ./
+
+  # Each check must refuse what it is there to refuse. The bad files are made at run time, in a scratch
+  # repository, so they are never in this repository's history.
+  refuses:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          path: action
+      - name: Make a scratch repository with one finding for each check
+        run: |
+          mkdir scratch && cd scratch && git init -q
+          mkdir -p .github/workflows
+          # shellcheck disable=SC2016 # the $1 is meant literally: it is the finding
+          printf '#!/bin/sh\necho $1\n' > unquoted                       # for the shellcheck step: SC2086, found by its shebang
+          printf 'on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n' \
+            > .github/workflows/w.yml                                    # for the pinned step: a tag, not a SHA
+          printf 'FROM python:3.13-slim\n' > Dockerfile                   # for the pinned step: no digest
+          printf 'on: push\njobs:\n  a:\n    runs-on: no-such-label\n    steps:\n      - run: echo hi\n' \
+            > .github/workflows/labels.yml                               # for the actionlint step: unknown runner label
+          git add -A
+      - name: shellcheck refuses
+        id: shellcheck
+        continue-on-error: true
+        working-directory: scratch
+        run: |
+          bash ../action/src/lint.sh install
+          LINT_BIN="$RUNNER_TEMP/kilotronic-lint-sc0.11.0-al1.7.12" bash ../action/src/lint.sh shellcheck
+      - name: actionlint refuses
+        id: actionlint
+        continue-on-error: true
+        working-directory: scratch
+        run: LINT_BIN="$RUNNER_TEMP/kilotronic-lint-sc0.11.0-al1.7.12" bash ../action/src/lint.sh actionlint
+      - name: pinned refuses
+        id: pinned
+        continue-on-error: true
+        working-directory: scratch
+        run: bash ../action/src/lint.sh pinned
+      - name: pinned accepts an explained exception and a build stage
+        working-directory: scratch
+        run: |
+          printf 'FROM python:3.13-slim@sha256:%s AS base\nFROM base\nFROM ctx # unpinned-ok: digest set by the build command\n' \
+            "$(printf '0%.0s' $(seq 64))" > Dockerfile
+          printf 'on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: ./local\n      - uses: actions/checkout@%s\n' \
+            "$(printf 'a%.0s' $(seq 40))" > .github/workflows/w.yml
+          git add -A
+          bash ../action/src/lint.sh pinned
+      - name: Each check must have refused
+        env:
+          SHELLCHECK: ${{ steps.shellcheck.outcome }}
+          ACTIONLINT: ${{ steps.actionlint.outcome }}
+          PINNED: ${{ steps.pinned.outcome }}
+        run: |
+          echo "shellcheck=$SHELLCHECK actionlint=$ACTIONLINT pinned=$PINNED"
+          test "$SHELLCHECK" = failure && test "$ACTIONLINT" = failure && test "$PINNED" = failure
+
+  ci:
+    name: ci
+    runs-on: ubuntu-latest
+    needs: [dogfood, refuses]
+    if: always()
+    steps:
+      - env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "$RESULTS"
+          for r in $RESULTS; do test "$r" = success; done

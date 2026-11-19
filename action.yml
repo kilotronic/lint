@@ -1,0 +1,80 @@
+name: Lint shell scripts and workflows
+description: shellcheck every tracked shell script, actionlint every workflow, and check that actions and base images are pinned. Pinned tool versions, checked downloads, no configuration needed.
+branding:
+  icon: check-square
+  color: gray-dark
+
+inputs:
+  shellcheck:
+    description: Run shellcheck on tracked shell scripts (*.sh, *.bash, or a sh/bash shebang). Also used by actionlint for run scripts.
+    required: false
+    default: "true"
+  actionlint:
+    description: Run actionlint on .github/workflows. A .github/actionlint.yaml (e.g. self-hosted runner labels) is used if present.
+    required: false
+    default: "true"
+  pinned:
+    description: Check that every action a workflow uses is pinned to a full commit SHA, and every Docker base image to a digest.
+    required: false
+    default: "true"
+  exclude:
+    description: >-
+      Paths shellcheck and the pinned check skip, as space- or newline-separated git glob patterns (e.g. "vendor/** originals/**").
+      A .shellcheckrc in the repo still applies to the files that are checked.
+    required: false
+    default: ""
+  shellcheck-args:
+    description: Extra shellcheck arguments, split on spaces (no quoting), e.g. "--severity=warning".
+    required: false
+    default: ""
+  actionlint-args:
+    description: Extra actionlint arguments, split on spaces (no quoting), e.g. "-ignore=SC2016".
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Install shellcheck and actionlint (pinned, checksums checked)
+      id: install
+      shell: bash
+      run: bash "$GITHUB_ACTION_PATH/src/lint.sh" install
+
+    - name: shellcheck (shell scripts)
+      id: shellcheck
+      if: inputs.shellcheck == 'true'
+      continue-on-error: true
+      shell: bash
+      env:
+        LINT_BIN: ${{ steps.install.outputs.bin }}
+        EXCLUDE: ${{ inputs.exclude }}
+        SHELLCHECK_ARGS: ${{ inputs.shellcheck-args }}
+      run: bash "$GITHUB_ACTION_PATH/src/lint.sh" shellcheck
+
+    - name: actionlint (workflows)
+      id: actionlint
+      if: inputs.actionlint == 'true'
+      continue-on-error: true
+      shell: bash
+      env:
+        LINT_BIN: ${{ steps.install.outputs.bin }}
+        SHELLCHECK: ${{ inputs.shellcheck }}
+        ACTIONLINT_ARGS: ${{ inputs.actionlint-args }}
+      run: bash "$GITHUB_ACTION_PATH/src/lint.sh" actionlint
+
+    - name: pinned (actions by commit SHA, base images by digest)
+      id: pinned
+      if: inputs.pinned == 'true'
+      continue-on-error: true
+      shell: bash
+      env:
+        EXCLUDE: ${{ inputs.exclude }}
+      run: bash "$GITHUB_ACTION_PATH/src/lint.sh" pinned
+
+    - name: Result
+      shell: bash
+      env:
+        SHELLCHECK_OUTCOME: ${{ steps.shellcheck.outcome }}
+        ACTIONLINT_OUTCOME: ${{ steps.actionlint.outcome }}
+        PINNED_OUTCOME: ${{ steps.pinned.outcome }}
+      run: bash "$GITHUB_ACTION_PATH/src/lint.sh" verdict

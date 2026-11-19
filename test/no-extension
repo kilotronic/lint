@@ -1,0 +1,3 @@
+#!/bin/sh
+# Checked because of its shebang, though it has no extension.
+echo "ok"
