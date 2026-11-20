@@ -142,10 +142,20 @@ jobs:
             if prek try-repo "$hooks" "$check" --all-files; then echo "::error::$check did not refuse"; exit 1; fi
           done
 
+  # src/lint.sh in throwaway repositories: what each check refuses and allows, the verdict, the hooks, and
+  # the download checksums.
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - run: bash test/test.sh
+
   ci:
     name: ci
     runs-on: ubuntu-latest
-    needs: [dogfood, refuses, prek-hooks, secret-scan, git-identity, data-leak-check]
+    needs: [dogfood, refuses, prek-hooks, unit-tests, secret-scan, git-identity, data-leak-check]
     if: always()
     steps:
       - env:
