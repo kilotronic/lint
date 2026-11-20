@@ -28,6 +28,32 @@ jobs:
 
 Linux and macOS runners, x86_64 or arm64.
 
+## Use as a pre-commit or prek hook
+
+The same checks run on your machine with [prek](https://github.com/j178/prek) or
+[pre-commit](https://pre-commit.com). In your `.pre-commit-config.yaml`:
+
+```yaml
+repos:
+  - repo: https://github.com/kilotronic/lint
+    rev: v1.1.0  # `prek autoupdate --freeze` pins the commit SHA
+    hooks:
+      - id: shellcheck
+      - id: actionlint
+      - id: pinned
+        # args: [--exclude=vendor/**]   # like the Action's exclude input (also for shellcheck)
+```
+
+| Hook | Stage | Runs when a commit changes |
+| --- | --- | --- |
+| `shellcheck` | `pre-commit` (also `pre-merge-commit`, `manual`) | A shell script (a `.sh`/`.bash` file, or an executable with a shell shebang) |
+| `actionlint` | `pre-commit` (also `pre-merge-commit`, `manual`) | A workflow, or `.github/actionlint.yaml` |
+| `pinned` | `pre-commit` (also `pre-merge-commit`, `manual`) | A workflow, an `action.yml`, or a Dockerfile |
+
+Each hook runs the Action's own step on all of the repository's tracked files, so a commit is checked the
+way CI will check it. shellcheck and actionlint are downloaded once, at the same pinned versions and with the
+same checksum checks, into `~/.cache`. The hooks need `bash`, `curl` and `tar` (Linux or macOS).
+
 ## Settings in your repository
 
 - **Self-hosted runner labels:** actionlint reports labels it doesn't know. List yours in
