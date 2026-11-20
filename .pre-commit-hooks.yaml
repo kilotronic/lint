@@ -1,0 +1,26 @@
+# Hooks for pre-commit and prek. Each runs the Action's own src/lint.sh step on the repository's tracked
+# files, with the same pinned, checksum-checked shellcheck and actionlint (cached under ~/.cache).
+- id: shellcheck
+  name: shellcheck (shell scripts)
+  description: shellcheck every tracked shell script (*.sh, *.bash, or a sh/bash shebang).
+  entry: src/lint.sh hook shellcheck
+  language: script
+  pass_filenames: false
+  types: [shell]
+  stages: [pre-commit, pre-merge-commit, manual]
+- id: actionlint
+  name: actionlint (workflows)
+  description: actionlint every workflow in .github/workflows, with their run scripts through shellcheck.
+  entry: src/lint.sh hook actionlint
+  language: script
+  pass_filenames: false
+  files: ^\.github/(workflows/.*\.ya?ml|actionlint\.ya?ml)$
+  stages: [pre-commit, pre-merge-commit, manual]
+- id: pinned
+  name: pinned (actions by commit SHA, base images by digest)
+  description: Every action a workflow uses is pinned to a commit SHA, and every Docker base image to a digest.
+  entry: src/lint.sh hook pinned
+  language: script
+  pass_filenames: false
+  files: (^\.github/workflows/.*\.ya?ml$|(^|/)action\.ya?ml$|Dockerfile)
+  stages: [pre-commit, pre-merge-commit, manual]

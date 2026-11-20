@@ -5,6 +5,7 @@
 #   (step) actionlint: check the workflows in .github/workflows (their run: scripts through shellcheck too)
 #   (step) pinned: every action used is pinned to a commit SHA, every Docker base image to a digest
 #   (step) verdict: fail if any check failed, so both always run and every finding shows in one run
+#   hook <check>: for .pre-commit-hooks.yaml: install into a cache directory, then run shellcheck, actionlint or pinned
 set -euo pipefail
 
 SHELLCHECK_VERSION=0.11.0
@@ -20,7 +21,8 @@ check_sum() { # sum file
   fi
 }
 
-cmd_install() {
+# Install the pinned shellcheck and actionlint once (checksums checked) and set LINT_BIN to their directory.
+install_tools() {
   local sc_os sc_arch sc_sum al_os al_arch al_sum
   case "$(uname -s)-$(uname -m)" in
     Linux-x86_64)
@@ -37,23 +39,38 @@ cmd_install() {
       al_os=darwin al_arch=amd64 al_sum=5b44c3bc2255115c9b69e30efc0fecdf498fdb63c5d58e17084fd5f16324c644 ;;
     *) echo "::error::lint: no shellcheck/actionlint build for $(uname -s) $(uname -m)"; exit 1 ;;
   esac
-  local dir="${RUNNER_TEMP:-/tmp}/kilotronic-lint-sc$SHELLCHECK_VERSION-al$ACTIONLINT_VERSION"
+  local dir="kilotronic-lint-sc$SHELLCHECK_VERSION-al$ACTIONLINT_VERSION"
+  if [ -n "${RUNNER_TEMP:-}" ]; then
+    dir="$RUNNER_TEMP/$dir"
+  else
+    dir="${XDG_CACHE_HOME:-$HOME/.cache}/$dir"
+  fi
   if [ ! -x "$dir/shellcheck" ] || [ ! -x "$dir/actionlint" ]; then
     mkdir -p "$dir"
-    local txz="$dir/shellcheck.tar.xz" tgz="$dir/actionlint.tar.gz"
+    local tmp
+    tmp=$(mktemp -d "$dir/download.XXXXXX")
+    local txz="$tmp/shellcheck.tar.xz" tgz="$tmp/actionlint.tar.gz"
     curl -sSfL -o "$txz" \
       "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/shellcheck-v${SHELLCHECK_VERSION}.${sc_os}.${sc_arch}.tar.xz"
     check_sum "$sc_sum" "$txz"
-    tar -xJf "$txz" -C "$dir" --strip-components=1 "shellcheck-v${SHELLCHECK_VERSION}/shellcheck"
+    tar -xJf "$txz" -C "$tmp" --strip-components=1 "shellcheck-v${SHELLCHECK_VERSION}/shellcheck"
     curl -sSfL -o "$tgz" \
       "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_${al_os}_${al_arch}.tar.gz"
     check_sum "$al_sum" "$tgz"
-    tar -xzf "$tgz" -C "$dir" actionlint
-    rm "$txz" "$tgz"
+    tar -xzf "$tgz" -C "$tmp" actionlint
+    # Moved into place whole, so two hooks running at once never see half a file.
+    mv -f "$tmp/shellcheck" "$dir/shellcheck"
+    mv -f "$tmp/actionlint" "$dir/actionlint"
+    rm -rf "$tmp"
   fi
-  "$dir/shellcheck" --version | sed -n 2p
-  echo "actionlint $("$dir/actionlint" --version | head -1)"
-  out bin "$dir"
+  LINT_BIN="$dir"
+}
+
+cmd_install() {
+  install_tools
+  "$LINT_BIN/shellcheck" --version | sed -n 2p
+  echo "actionlint $("$LINT_BIN/actionlint" --version | head -1)"
+  out bin "$LINT_BIN"
 }
 
 EXCLUDE_GLOBS=()
@@ -160,4 +177,25 @@ cmd_verdict() {
   echo "lint: nothing found (shellcheck: ${SHELLCHECK_OUTCOME:-off}, actionlint: ${ACTIONLINT_OUTCOME:-off}, pinned: ${PINNED_OUTCOME:-off})"
 }
 
-"cmd_${1:?usage: lint.sh install|shellcheck|actionlint|pinned|verdict}"
+# A pre-commit/prek hook: the same check as the Action's step, on the repository's tracked files.
+# The hook's args may add --exclude=<git glob> (repeatable), like the Action's exclude input.
+cmd_hook() {
+  local check="${1:-}" arg
+  case "$check" in
+    shellcheck | actionlint) install_tools ;;
+    pinned) ;;
+    *) echo "usage: lint.sh hook shellcheck|actionlint|pinned [--exclude=<glob>]..." >&2; exit 2 ;;
+  esac
+  shift
+  for arg in "$@"; do
+    case "$arg" in
+      --exclude=*) EXCLUDE_GLOBS+=(":(exclude,glob)${arg#--exclude=}") ;;
+      *) echo "lint: unknown hook argument: $arg" >&2; exit 2 ;;
+    esac
+  done
+  "cmd_$check"
+}
+
+check="${1:?usage: lint.sh install|shellcheck|actionlint|pinned|verdict|hook <check>}"
+shift
+"cmd_$check" "$@"

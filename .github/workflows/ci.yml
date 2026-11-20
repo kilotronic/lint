@@ -71,10 +71,44 @@ jobs:
           echo "shellcheck=$SHELLCHECK actionlint=$ACTIONLINT pinned=$PINNED"
           test "$SHELLCHECK" = failure && test "$ACTIONLINT" = failure && test "$PINNED" = failure
 
+  # The pre-commit/prek hooks, through prek try-repo: a clean sample passes, each check refuses its finding.
+  prek-hooks:
+    runs-on: ubuntu-latest
+    env:
+      GIT_AUTHOR_NAME: ci
+      GIT_AUTHOR_EMAIL: ci@kilotronic.com
+      GIT_COMMITTER_NAME: ci
+      GIT_COMMITTER_EMAIL: ci@kilotronic.com
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - run: pip install prek==0.5.11
+      - name: prek try-repo against sample files
+        run: |
+          hooks="$GITHUB_WORKSPACE"
+          cd "$(mktemp -d)" && git init -q && mkdir -p .github/workflows
+          # shellcheck disable=SC2016 # the $1 is meant literally
+          printf '#!/bin/sh\necho "$1"\n' > ok.sh
+          printf 'on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@%s\n' \
+            "$(printf 'a%.0s' $(seq 40))" > .github/workflows/w.yml
+          git add -A
+          prek try-repo "$hooks" --all-files
+          git commit -q -m clean
+          for check in shellcheck actionlint pinned; do
+            git reset -q --hard
+            # shellcheck disable=SC2016 # the $1 is meant literally: it is the finding
+            case $check in
+              shellcheck) printf '#!/bin/sh\necho $1\n' > ok.sh ;;
+              actionlint) sed -i 's/ubuntu-latest/no-such-label/' .github/workflows/w.yml ;;
+              pinned) printf 'FROM python:3.13-slim\n' > Dockerfile ;;
+            esac
+            git add -A
+            if prek try-repo "$hooks" "$check" --all-files; then echo "::error::$check did not refuse"; exit 1; fi
+          done
+
   ci:
     name: ci
     runs-on: ubuntu-latest
-    needs: [dogfood, refuses]
+    needs: [dogfood, refuses, prek-hooks]
     if: always()
     steps:
       - env:
