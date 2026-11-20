@@ -36,7 +36,7 @@ The same checks run on your machine with [prek](https://github.com/j178/prek) or
 ```yaml
 repos:
   - repo: https://github.com/kilotronic/lint
-    rev: v1.1.0  # `prek autoupdate --freeze` pins the commit SHA
+    rev: 50d58c6fc3916432a60d6caf5914d5bb83a60a16  # v1.1.0
     hooks:
       - id: shellcheck
       - id: actionlint
