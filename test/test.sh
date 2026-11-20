@@ -39,7 +39,8 @@ workflow() { # workflow <uses-line or ""> [runs-on]
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-unset EXCLUDE SHELLCHECK_ARGS ACTIONLINT_ARGS SHELLCHECK RUNNER_TEMP GITHUB_OUTPUT
+unset EXCLUDE SHELLCHECK_ARGS ACTIONLINT_ARGS SHELLCHECK RUNNER_TEMP GITHUB_OUTPUT LINT_BIN \
+  SHELLCHECK_OUTCOME ACTIONLINT_OUTCOME PINNED_OUTCOME
 sha=$(printf 'a%.0s' $(seq 40))
 digest=$(printf '0%.0s' $(seq 64))
 # shellcheck disable=SC2016 # the $1 is meant literally: it is the finding
@@ -81,7 +82,8 @@ expect "shellcheck honours EXCLUDE" 0 env EXCLUDE="vendor/**" bash "$LINT" shell
 expect "shellcheck without EXCLUDE refuses the vendored script" 1 lint shellcheck
 repo a.sh "$bad_sh"
 expect "shellcheck passes SHELLCHECK_ARGS on" 0 env SHELLCHECK_ARGS="--exclude=SC2086 --exclude=SC2148" bash "$LINT" shellcheck
-(cd "$tmp" && expect "shellcheck outside a checkout is refused" 1 lint shellcheck)
+cd "$tmp" # outside any checkout; not a subshell, so a failure is counted
+expect "shellcheck outside a checkout is refused" 1 lint shellcheck
 
 # --- actionlint
 repo .github/workflows/w.yml "$(workflow "uses: actions/checkout@$sha")"
@@ -173,19 +175,28 @@ mkdir -p "$tmp/fakebin" "$tmp/fake/shellcheck-v0" && cd "$tmp/fake"
 printf '#!/bin/sh\nexit 0\n' >shellcheck-v0/shellcheck && cp shellcheck-v0/shellcheck actionlint && chmod +x shellcheck-v0/shellcheck actionlint
 sc_dir=$(sed -n 's/^SHELLCHECK_VERSION=//p' "$LINT")
 mv shellcheck-v0 "shellcheck-v$sc_dir" && tar -cJf sc.tar.xz "shellcheck-v$sc_dir" && tar -czf al.tar.gz actionlint
+real_curl=$(command -v curl)
+# FAKE names the tool whose download is faked; the other comes from the real curl.
 cat >"$tmp/fakebin/curl" <<CURL
 #!/bin/sh
 url=\$(eval echo "\\\${\$#}")
+case "\$url" in
+  *shellcheck*) [ "\$FAKE" = shellcheck ] || exec "$real_curl" "\$@" ;;
+  *) [ "\$FAKE" = actionlint ] || exec "$real_curl" "\$@" ;;
+esac
 while [ "\$1" != -o ]; do shift; done
 case "\$url" in *shellcheck*) cp "$tmp/fake/sc.tar.xz" "\$2" ;; *) cp "$tmp/fake/al.tar.gz" "\$2" ;; esac
 CURL
 chmod +x "$tmp/fakebin/curl"
-expect "a download with the wrong checksum is refused" 1 env PATH="$tmp/fakebin:$PATH" XDG_CACHE_HOME="$tmp/cache2" bash "$LINT" install
-if [ -n "$(find "$tmp/cache2" -name shellcheck -o -name actionlint -type f 2>/dev/null)" ]; then
-  fail "the bad download was installed"
-else
-  pass "the bad download was not installed"
-fi
+for tool in shellcheck actionlint; do
+  expect "a $tool download with the wrong checksum is refused" 1 \
+    env FAKE="$tool" PATH="$tmp/fakebin:$PATH" XDG_CACHE_HOME="$tmp/cache-$tool" bash "$LINT" install
+  if [ -n "$(find "$tmp/cache-$tool" -maxdepth 2 -type f \( -name shellcheck -o -name actionlint \) 2>/dev/null)" ]; then
+    fail "the bad $tool download left a tool installed"
+  else
+    pass "the bad $tool download left no tool installed"
+  fi
+done
 
 echo
 if [ "$fails" -gt 0 ]; then
