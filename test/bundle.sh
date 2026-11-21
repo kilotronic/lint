@@ -196,6 +196,27 @@ printf 'a: %s\n' "$(printf 'x%.0s' $(seq 100))" >long.yaml
 printf 'extends: default\nrules:\n  line-length: {max: 80}\n  document-start: disable\n' >.yamllint
 git add -A
 if run yamllint; then fail "yamllint reads the repository's .yamllint"; else pass "yamllint reads the repository's .yamllint"; fi
+# A repository's own .markdownlint.* adds to the bundle's defaults instead of replacing them.
+for own in '.markdownlint.yaml|MD026: false\n' '.markdownlint.jsonc|// comment\n{ "MD026": false }\n'; do
+  clean_repo
+  printf '%b' "${own#*|}" >"${own%%|*}"
+  printf '# A\n\nA line that is much longer than eighty characters, so markdownlint would object to it on its own.\n\n## Hello!\n\n<b>inline HTML</b>\n' >keep.md
+  git add -A
+  if run markdownlint; then pass "a repository's own ${own%%|*} adds to the bundle's defaults"; else
+    fail "a repository's own ${own%%|*} adds to the bundle's defaults"
+    sed 's/^/     /' "$tmp/log"
+  fi
+done
+clean_repo
+printf 'MD026: false\n' >.markdownlint.yaml
+printf '# A\n\n# B\n' >two.md # MD025, which the bundle's defaults keep on
+git add -A
+if run markdownlint; then fail "the bundle's defaults still apply under a repository's own file"; else pass "the bundle's defaults still apply under a repository's own file"; fi
+clean_repo
+printf 'extends: null\ndefault: true\n' >.markdownlint.yaml
+printf '# A\n\n<b>inline HTML</b>\n' >html.md
+git add -A
+if run markdownlint; then fail "a repository's own extends: replaces the bundle's defaults"; else pass "a repository's own extends: replaces the bundle's defaults"; fi
 clean_repo
 printf '{ "default": true, "MD013": { "line_length": 20 } }\n' >.markdownlint.json
 printf '# A\n\nA line that is longer than twenty characters.\n' >long.md

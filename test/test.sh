@@ -195,6 +195,28 @@ $cmd"
       - run: $cmd"
   refuses "pinned refuses in a workflow: $cmd" lint pinned
 done
+# After the pipe: env and VAR=value before the shell; a pipe carried to the next line by a backslash or by
+# ending the line; templates (chezmoi .tmpl, copier .jinja) as well as scripts.
+for cmd in "curl -LsSf https://example.test/x $pipe env UV_INSTALL_DIR=\"\$HOME/.local/bin\" sh" \
+  "curl -fsSL https://example.test/x $pipe BINDIR=\"\$HOME/.local/bin\" sh" \
+  "curl -fsSL https://example.test/x $pipe env -i A=1 B='two words' bash -s" \
+  "curl -fsSL https://example.test/x \\
+  $pipe BINDIR=\"\$HOME/bin\" sh" "curl -fsSL https://example.test/x $pipe
+  sh"; do
+  repo install.sh "#!/bin/sh
+$cmd"
+  refuses "pinned refuses in a script: $(echo "$cmd" | tr '\n' ' ' | tr -s ' ')" lint pinned
+done
+for f in .chezmoiscripts/run_once_install.sh.tmpl dot_zshrc.tmpl template/ci.yml.jinja; do
+  repo "$f" "curl -fsSL https://example.test/x $pipe sh"
+  refuses "pinned refuses a piped download in a template: $f" lint pinned
+done
+for ok in "curl -s https://example.test/x $pipe env FOO=1 jq .name" "curl -s https://example.test/x $pipe
+  jq .name" "curl -fsSL https://example.test/x || true"; do
+  repo install.sh "#!/bin/sh
+$ok"
+  expect "pinned allows $(echo "$ok" | tr '\n' ' ' | tr -s ' ')" 0 lint pinned
+done
 repo Dockerfile "FROM scratch
 RUN curl -fsSL https://example.test/x $pipe sh"
 refuses "pinned refuses a piped download in a Dockerfile" lint pinned
@@ -408,6 +430,30 @@ jobs:
     steps:
       - run: echo self-hosted vars.X"
 expect "workflow-safety allows GitHub's runners on a public repo" 0 env KILOTRONIC_VISIBILITY=PUBLIC bash "$LINT" workflow-safety
+# A vars.* runner only while the repository is private, GitHub's runner once it is public.
+for ro in "\${{ (github.event.repository.private && vars.RUNS_ON) || 'ubuntu-latest' }}" \
+  "\${{ ( github.event.repository.private && vars.RUNNER ) || \"macos-15\" }} # private: the fleet"; do
+  repo .github/workflows/w.yml "on: pull_request
+permissions: {}
+jobs:
+  a:
+    runs-on: $ro
+    steps:
+      - run: echo hi"
+  expect "workflow-safety allows on a public repo: runs-on: $ro" 0 env KILOTRONIC_VISIBILITY=PUBLIC bash "$LINT" workflow-safety
+done
+for ro in "\${{ vars.RUNS_ON || 'ubuntu-latest' }}" "\${{ (github.event.repository.private && vars.RUNS_ON) || 'self-hosted' }}" \
+  "\${{ (github.event.repository.private && vars.RUNS_ON) || vars.OTHER }}" \
+  "\${{ (github.event.repository.private || vars.RUNS_ON) || 'ubuntu-latest' }}"; do
+  repo .github/workflows/w.yml "on: pull_request
+permissions: {}
+jobs:
+  a:
+    runs-on: $ro
+    steps:
+      - run: echo hi"
+  refuses "workflow-safety refuses on a public repo: runs-on: $ro" env KILOTRONIC_VISIBILITY=PUBLIC bash "$LINT" workflow-safety
+done
 # Visibility, when not given: asked of gh once and cached in the clone; unknown is not public.
 repo .github/workflows/w.yml "on: pull_request
 permissions: {}

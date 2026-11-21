@@ -307,7 +307,9 @@ cmd_pinned() {
     '**/.pre-commit-config.yml' ${EXCLUDE_GLOBS[@]+"${EXCLUDE_GLOBS[@]}"})
   # No download piped into a shell (curl ... | sh, sh -c "$(curl ...)"): it runs whatever the server sends
   # that day. Download, check a checksum, then run. Scripts, workflows, actions, Dockerfiles and Makefiles.
-  local pipe_re='(curl|wget)(.*[^|])?\|[[:space:]]*(sudo([[:space:]]+-[^[:space:]]+)*[[:space:]]+)?(env[[:space:]]+)?([^[:space:]|]*/)?(ba|z|da|k)?sh([[:space:]]|;|\)|$)'
+  # After the pipe: sudo and its flags, env and its flags, and VAR=value assignments may come before the shell.
+  local assign='[A-Za-z_][A-Za-z0-9_]*=("[^"]*"|'"'"'[^'"'"']*'"'"'|[^[:space:]]*)[[:space:]]+'
+  local pipe_re='(curl|wget)(.*[^|])?\|[[:space:]]*(sudo([[:space:]]+-[^[:space:]]+)*[[:space:]]+)?(env([[:space:]]+-[^[:space:]]+)*[[:space:]]+)?('"$assign"')*([^[:space:]|]*/)?(ba|z|da|k)?sh([[:space:]]|;|\)|$)'
   local subst_re='(ba|z|da|k)?sh[[:space:]]+-c[[:space:]]+["'"'"']?\$\((curl|wget)'
   local procsub_re='(^|[[:space:];&|(])((ba|z|da|k)?sh|source|\.)[[:space:]]+<\([[:space:]]*(curl|wget)'
   local joined start
@@ -316,10 +318,15 @@ cmd_pinned() {
     while IFS= read -r line || [ -n "$line" ]; do
       n=$((n + 1))
       [[ "$line" =~ ^[[:space:]]*# ]] && continue
-      # A line ending in a backslash continues on the next: read them as one (the finding names the first).
+      # A line ending in a backslash, or in a pipe, continues on the next: read them as one (the finding
+      # names the first).
       [ -z "$joined" ] && start=$n
       if [[ "$line" == *\\ ]]; then
         joined="$joined${line%\\} "
+        continue
+      fi
+      if [[ "$line" =~ \|[[:space:]]*$ && ! "$line" =~ \|\|[[:space:]]*$ ]]; then
+        joined="$joined$line "
         continue
       fi
       line="$joined$line" joined=""
@@ -330,6 +337,8 @@ cmd_pinned() {
     done <"$f"
   done < <({
     shell_files || true
+    # Templates (chezmoi's *.tmpl, copier's *.jinja) become scripts and config when they are applied.
+    git ls-files -z -- '*.tmpl' '**/*.tmpl' '*.jinja' '**/*.jinja' ${EXCLUDE_GLOBS[@]+"${EXCLUDE_GLOBS[@]}"}
     workflow_files
     dockerfiles
     git ls-files -z -- 'Makefile' '**/Makefile' 'GNUmakefile' \
