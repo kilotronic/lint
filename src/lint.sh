@@ -32,17 +32,24 @@ install_tools() {
   case "$(uname -s)-$(uname -m)" in
     Linux-x86_64)
       sc_os=linux sc_arch=x86_64 sc_sum=8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198
-      al_os=linux al_arch=amd64 al_sum=8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8 ;;
+      al_os=linux al_arch=amd64 al_sum=8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+      ;;
     Linux-aarch64 | Linux-arm64)
       sc_os=linux sc_arch=aarch64 sc_sum=12b331c1d2db6b9eb13cfca64306b1b157a86eb69db83023e261eaa7e7c14588
-      al_os=linux al_arch=arm64 al_sum=325e971b6ba9bfa504672e29be93c24981eeb1c07576d730e9f7c8805afff0c6 ;;
+      al_os=linux al_arch=arm64 al_sum=325e971b6ba9bfa504672e29be93c24981eeb1c07576d730e9f7c8805afff0c6
+      ;;
     Darwin-arm64)
       sc_os=darwin sc_arch=aarch64 sc_sum=56affdd8de5527894dca6dc3d7e0a99a873b0f004d7aabc30ae407d3f48b0a79
-      al_os=darwin al_arch=arm64 al_sum=aba9ced2dee8d27fecca3dc7feb1a7f9a52caefa1eb46f3271ea66b6e0e6953f ;;
+      al_os=darwin al_arch=arm64 al_sum=aba9ced2dee8d27fecca3dc7feb1a7f9a52caefa1eb46f3271ea66b6e0e6953f
+      ;;
     Darwin-x86_64)
       sc_os=darwin sc_arch=x86_64 sc_sum=3c89db4edcab7cf1c27bff178882e0f6f27f7afdf54e859fa041fca10febe4c6
-      al_os=darwin al_arch=amd64 al_sum=5b44c3bc2255115c9b69e30efc0fecdf498fdb63c5d58e17084fd5f16324c644 ;;
-    *) echo "::error::lint: no shellcheck/actionlint build for $(uname -s) $(uname -m)"; exit 1 ;;
+      al_os=darwin al_arch=amd64 al_sum=5b44c3bc2255115c9b69e30efc0fecdf498fdb63c5d58e17084fd5f16324c644
+      ;;
+    *)
+      echo "::error::lint: no shellcheck/actionlint build for $(uname -s) $(uname -m)"
+      exit 1
+      ;;
   esac
   local dir="kilotronic-lint-sc$SHELLCHECK_VERSION-al$ACTIONLINT_VERSION"
   if [ -n "${RUNNER_TEMP:-}" ]; then
@@ -139,7 +146,10 @@ check_skip_ids() {
   while IFS= read -r id; do
     case " $SKIPPABLE $FLOOR " in
       *" $id "*) ;;
-      *) echo "::error::lint: unknown check id in skip: $id (known, in lower case: $SKIPPABLE $FLOOR)"; bad=1 ;;
+      *)
+        echo "::error::lint: unknown check id in skip: $id (known, in lower case: $SKIPPABLE $FLOOR)"
+        bad=1
+        ;;
     esac
   done < <(skip_ids)
   return "$bad"
@@ -152,8 +162,14 @@ skipped() {
     for want in "$@"; do
       [ "$id" = "$want" ] || continue
       case " $SKIPPABLE " in
-        *" $id "*) echo "$1: skipped (skip: $id)"; return 0 ;;
-        *) $warned || echo "::warning::lint: $id is a floor check; it can't be skipped, so $1 runs"; warned=true ;;
+        *" $id "*)
+          echo "$1: skipped (skip: $id)"
+          return 0
+          ;;
+        *)
+          $warned || echo "::warning::lint: $id is a floor check; it can't be skipped, so $1 runs"
+          warned=true
+          ;;
       esac
     done
   done < <(skip_ids)
@@ -168,7 +184,10 @@ visibility() {
     return
   fi
   local dir cache v
-  dir=$(git rev-parse --git-common-dir 2>/dev/null) || { echo UNKNOWN; return; }
+  dir=$(git rev-parse --git-common-dir 2>/dev/null) || {
+    echo UNKNOWN
+    return
+  }
   cache="$dir/kilotronic-visibility"
   if [ -s "$cache" ] && [ -n "$(find "$cache" -mtime -1 2>/dev/null)" ]; then
     cat "$cache"
@@ -204,8 +223,8 @@ cmd_pinned() {
       [[ "$line" =~ ^[[:space:]]*(-[[:space:]]+)?uses:[[:space:]]*[\"\']?([^\"\'[:space:]#]+) ]] || continue
       local ref="${BASH_REMATCH[2]}"
       case "$ref" in
-        ./* | ../*) continue ;;                          # an action in this repo
-        docker://*@sha256:*) continue ;;                 # an image by digest
+        ./* | ../*) continue ;;          # an action in this repo
+        docker://*@sha256:*) continue ;; # an image by digest
       esac
       [[ "$ref" =~ @[0-9a-f]{40}$ ]] && continue
       [[ "$line" == *"# unpinned-ok:"* ]] && continue # pinned elsewhere, with the reason on the line
@@ -221,8 +240,8 @@ cmd_pinned() {
       if [[ "$line" =~ ^[[:space:]]*FROM[[:space:]]+(--[^[:space:]]+[[:space:]]+)*([^[:space:]]+)([[:space:]]+AS[[:space:]]+([^[:space:]]+))? ]]; then
         local image="${BASH_REMATCH[2]}" alias="${BASH_REMATCH[4]}"
         shopt -u nocasematch
-        if [[ "$image" != *@sha256:* && "$image" != scratch && "$stages" != *" $image "* && "$image" != *'$'* \
-          && "$prev" != *"# unpinned-ok:"* ]]; then
+        if [[ "$image" != *@sha256:* && "$image" != scratch && "$stages" != *" $image "* && "$image" != *'$'* &&
+          "$prev" != *"# unpinned-ok:"* ]]; then
           echo "$f:$n: base image not pinned to a digest (image@sha256:...): $image"
           bad=1
         fi
@@ -277,8 +296,13 @@ cmd_pinned() {
       echo "$f:$start: a download piped into a shell; download it, check its checksum, then run it"
       bad=1
     done <"$f"
-  done < <({ shell_files || true; workflow_files; dockerfiles; git ls-files -z -- 'Makefile' '**/Makefile' 'GNUmakefile' \
-    '**/GNUmakefile' '*.mk' '**/*.mk' ${EXCLUDE_GLOBS[@]+"${EXCLUDE_GLOBS[@]}"}; } | sort -zu)
+  done < <({
+    shell_files || true
+    workflow_files
+    dockerfiles
+    git ls-files -z -- 'Makefile' '**/Makefile' 'GNUmakefile' \
+      '**/GNUmakefile' '*.mk' '**/*.mk' ${EXCLUDE_GLOBS[@]+"${EXCLUDE_GLOBS[@]}"}
+  } | sort -zu)
   [ "$bad" = 0 ] && echo "pinned: actions by commit SHA, base images by digest, pre-commit revs by commit, no piped downloads"
   return "$bad"
 }
@@ -318,7 +342,8 @@ cmd_non_root() {
     n=0
     while IFS= read -r line || [ -n "$line" ]; do
       n=$((n + 1))
-      if [[ "$line" =~ $ok_re ]]; then exempt=true
+      if [[ "$line" =~ $ok_re ]]; then
+        exempt=true
       elif [[ "$line" =~ $stage_re ]]; then
         [ -n "$alias" ] && stages="$stages$alias=$user"$'\n'
         image="${BASH_REMATCH[2]}" alias="${BASH_REMATCH[4]}" last_from=$n user=""
@@ -327,14 +352,21 @@ cmd_non_root() {
           [ "$(echo "${pair%%=*}" | tr '[:upper:]' '[:lower:]')" = "$(echo "$image" | tr '[:upper:]' '[:lower:]')" ] && user="${pair#*=}"
         done <<<"$stages"
         [[ -z "$user" && "$image" == *:nonroot* ]] && user=nonroot
-      elif [[ "$line" =~ $user_re ]]; then user="${BASH_REMATCH[1]}"
+      elif [[ "$line" =~ $user_re ]]; then
+        user="${BASH_REMATCH[1]}"
       fi
     done <"$f"
     $exempt && continue
     [ "$last_from" -gt 0 ] || continue
     case "$user" in
-      "") echo "$f:$last_from: the final stage runs as root: add USER <name> after its FROM"; bad=1 ;;
-      root | 0 | root:* | 0:*) echo "$f:$last_from: the final stage runs as root (USER $user)"; bad=1 ;;
+      "")
+        echo "$f:$last_from: the final stage runs as root: add USER <name> after its FROM"
+        bad=1
+        ;;
+      root | 0 | root:* | 0:*)
+        echo "$f:$last_from: the final stage runs as root (USER $user)"
+        bad=1
+        ;;
     esac
   done < <(dockerfiles)
   [ "$bad" = 0 ] && echo "non-root: every Dockerfile's final stage runs as a user other than root"
@@ -362,14 +394,20 @@ cmd_hook() {
   case "$check" in
     shellcheck | actionlint) install_tools ;;
     pinned | workflow-safety | non-root) ;;
-    *) echo "usage: lint.sh hook shellcheck|actionlint|pinned|workflow-safety|non-root [--exclude=<glob>]..." >&2; exit 2 ;;
+    *)
+      echo "usage: lint.sh hook shellcheck|actionlint|pinned|workflow-safety|non-root [--exclude=<glob>]..." >&2
+      exit 2
+      ;;
   esac
   shift
   for arg in "$@"; do
     case "$arg" in
       --exclude=*) EXCLUDE_GLOBS+=(":(exclude,glob)${arg#--exclude=}") ;;
       --skip=*) SKIP_CHECKS="${SKIP_CHECKS:-} ${arg#--skip=}" ;;
-      *) echo "lint: unknown hook argument: $arg" >&2; exit 2 ;;
+      *)
+        echo "lint: unknown hook argument: $arg" >&2
+        exit 2
+        ;;
     esac
   done
   check_skip_ids >&2 || exit 2

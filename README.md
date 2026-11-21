@@ -50,8 +50,8 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4       # pin a commit SHA, as the pinned check will tell you
-      - uses: kilotronic/lint@v1        # pin a commit SHA in production
+      - uses: actions/checkout@v4 # pin a commit SHA, as the pinned check will tell you
+      - uses: kilotronic/lint@v1 # pin a commit SHA in production
 ```
 
 Linux and macOS runners, x86_64 or arm64.
@@ -65,20 +65,20 @@ your `.pre-commit-config.yaml`:
 ```yaml
 repos:
   - repo: https://github.com/kilotronic/lint
-    rev: <commit of the release>  # frozen: v1.2.0
+    rev: <commit of the release> # frozen: v1.2.0
     hooks:
       # format-all: formatters, which rewrite files (first, so the linters see the result)
-      - id: ruff-format          # Python
-      - id: prettier             # JS, TS, CSS, Markdown, JSON, YAML
-      - id: shfmt                # shell
-      - id: taplo-format         # TOML
+      - id: ruff-format # Python
+      - id: prettier # JS, TS, CSS, Markdown, JSON, YAML
+      - id: shfmt # shell
+      - id: taplo-format # TOML
       # lint-all: linters
-      - id: ruff-check           # Python (fixes what it safely can)
+      - id: ruff-check # Python (fixes what it safely can)
       - id: shellcheck
       - id: actionlint
       - id: markdownlint
       - id: yamllint
-      - id: csv-lint             # UTF-8, same columns in every row, a final newline; never rewritten
+      - id: csv-lint # UTF-8, same columns in every row, a final newline; never rewritten
       - id: check-json
       - id: check-yaml
       - id: check-toml
@@ -96,16 +96,16 @@ repos:
 Run the same hooks in CI with `prek run --all-files` (`SKIP=` any hook CI must not run), so a commit is
 checked the same way at commit time and in CI.
 
-| Hooks | Versions | Default configuration when the repository has none of its own |
-| --- | --- | --- |
-| `ruff-format`, `ruff-check` | ruff 0.17.4 | ruff's defaults (`ruff.toml` / `pyproject.toml` win) |
-| `prettier` | prettier 3.9.10 | prettier's defaults (`.prettierrc`, `.prettierignore` win); lockfiles skipped |
-| `shfmt` | shfmt-py 4.2.0 | `-i 2 -ci -bn`; a `.editorconfig` replaces them |
-| `taplo-format` | taplo 0.9.3 | taplo's defaults (`taplo.toml` / `.taplo.toml` win) |
-| `markdownlint` | markdownlint-cli2 0.24.0 | [`src/markdownlint/.markdownlint.jsonc`](src/markdownlint/.markdownlint.jsonc): line length and table layout left to prettier |
-| `yamllint` | yamllint 1.38.0 | [`src/kilotronic_lint/yamllint.yaml`](src/kilotronic_lint/yamllint.yaml): spacing left to prettier, `on:` allowed |
-| `csv-lint` | this repository | none needed; prints where, never a cell's text |
-| `check-*`, fixers | pre-commit-hooks 6.0.0 | CSV/TSV files are never rewritten; `check-json` skips JSON-with-comments files (`tsconfig*.json`, `.vscode/`, `.devcontainer/`) |
+| Hooks                       | Versions                 | Default configuration when the repository has none of its own                                                                   |
+| --------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
+| `ruff-format`, `ruff-check` | ruff 0.17.4              | ruff's defaults (`ruff.toml` / `pyproject.toml` win)                                                                            |
+| `prettier`                  | prettier 3.9.10          | prettier's defaults (`.prettierrc`, `.prettierignore` win); lockfiles skipped                                                   |
+| `shfmt`                     | shfmt-py 4.2.0           | `-i 2 -ci -bn`; a `.editorconfig` replaces them                                                                                 |
+| `taplo-format`              | taplo 0.9.3              | taplo's defaults (`taplo.toml` / `.taplo.toml` win)                                                                             |
+| `markdownlint`              | markdownlint-cli2 0.24.0 | [`src/markdownlint/.markdownlint.jsonc`](src/markdownlint/.markdownlint.jsonc): line length and table layout left to prettier   |
+| `yamllint`                  | yamllint 1.38.0          | [`src/kilotronic_lint/yamllint.yaml`](src/kilotronic_lint/yamllint.yaml): spacing left to prettier, `on:` allowed               |
+| `csv-lint`                  | this repository          | none needed; prints where, never a cell's text                                                                                  |
+| `check-*`, fixers           | pre-commit-hooks 6.0.0   | CSV/TSV files are never rewritten; `check-json` skips JSON-with-comments files (`tsconfig*.json`, `.vscode/`, `.devcontainer/`) |
 
 The `lint.sh` hooks (`shellcheck`, `actionlint`, `pinned`, `workflow-safety`, `non-root`) run the Action's own
 step on all of the repository's tracked files, so a commit is checked the way CI will check it. shellcheck and
@@ -148,13 +148,13 @@ The floor checks can't be skipped: naming `shellcheck`, `actionlint`, `pinned`, 
 
 ## Inputs
 
-| Input | Default | Meaning |
-| --- | --- | --- |
-| `skip` | empty | Checks to skip, by id: only `non-root`; a floor check named here warns and runs |
-| `shellcheck`, `actionlint`, `pinned` | `true` | Kept for v1 callers: floor checks, so `false` warns and they run |
-| `exclude` | empty | Space- or newline-separated git glob patterns that shellcheck, pinned, workflow-safety and non-root skip, e.g. `vendor/** originals/**` |
-| `shellcheck-args` | empty | Extra shellcheck arguments, split on spaces, e.g. `--severity=warning` |
-| `actionlint-args` | empty | Extra actionlint arguments, split on spaces, e.g. `-ignore=SC2016` |
+| Input                                | Default | Meaning                                                                                                                                 |
+| ------------------------------------ | ------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `skip`                               | empty   | Checks to skip, by id: only `non-root`; a floor check named here warns and runs                                                         |
+| `shellcheck`, `actionlint`, `pinned` | `true`  | Kept for v1 callers: floor checks, so `false` warns and they run                                                                        |
+| `exclude`                            | empty   | Space- or newline-separated git glob patterns that shellcheck, pinned, workflow-safety and non-root skip, e.g. `vendor/** originals/**` |
+| `shellcheck-args`                    | empty   | Extra shellcheck arguments, split on spaces, e.g. `--severity=warning`                                                                  |
+| `actionlint-args`                    | empty   | Extra actionlint arguments, split on spaces, e.g. `-ignore=SC2016`                                                                      |
 
 ## Versions
 
