@@ -1,0 +1,4 @@
+# The check ids a repository may skip: the Action's `skip:` input, or a hook's `--skip=<id>`. One per line;
+# a second word `opt-in` would mark a check that runs only when a repository turns it on.
+# src/lint.sh reads this file, and so does the owner's nightly settings sweep, at the commit a repository pins.
+non-root

@@ -25,7 +25,7 @@ inputs:
     default: "true"
   skip:
     description: >-
-      Checks to skip, by id, separated by commas or spaces. Only non-root can be skipped. The floor checks (shellcheck,
+      Checks to skip, by id, separated by commas or spaces. Only non-root can be skipped (skippable.txt). The floor checks (shellcheck,
       actionlint, pinned, workflow-safety, lint-all, format-all) refuse: naming one prints a warning and it runs. An
       unknown id fails the run.
     required: false

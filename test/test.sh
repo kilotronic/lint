@@ -515,6 +515,16 @@ repo a.txt hi
 expect "an unknown id in SKIP_CHECKS fails the install step" 1 env SKIP_CHECKS="non-rooot" bash "$LINT" install
 expect "a known id passes the install step" 0 env SKIP_CHECKS="non-root" bash "$LINT" install
 expect "a hook refuses an unknown --skip id" 1 lint hook non-root --skip=nope
+# The skippable ids come from skippable.txt (also read by the owner's settings sweep), not a copy in lint.sh.
+ROOT="$(dirname "$(dirname "$LINT")")"
+if [ "$(grep -v '^#' "$ROOT/skippable.txt" | awk 'NF { print $1 }')" = "non-root" ]; then
+  pass "skippable.txt lists non-root"
+else fail "skippable.txt lists non-root"; fi
+mkdir -p "$tmp/copy/src" && cp "$LINT" "$tmp/copy/src/" && printf '# nothing\n' >"$tmp/copy/skippable.txt"
+repo Dockerfile "FROM scratch"
+refuses "with non-root not in skippable.txt, skipping it is refused" env SKIP_CHECKS="non-root" bash "$tmp/copy/src/lint.sh" non-root
+rm -f "$tmp/copy/skippable.txt"
+refuses "with no skippable.txt, nothing can be skipped" env SKIP_CHECKS="non-root" bash "$tmp/copy/src/lint.sh" non-root
 
 # --- review findings: evasions that must be refused, and false alarms that must pass
 # shellcheck disable=SC2016 # the ${{ }} are meant literally: they are the findings

@@ -134,9 +134,11 @@ cmd_actionlint() {
 }
 
 # Skipping a check: the Action's skip input (SKIP_CHECKS) or a hook's --skip=<id>, a list of check ids. Only
-# non-root may be skipped (the repository's reason lives in the owner's settings, which the nightly sweep
-# matches against each skip). The floor checks refuse: skipping one says so and the check runs anyway.
-SKIPPABLE="non-root"
+# the ids in skippable.txt may be skipped (the repository's reason lives in the owner's settings, which the
+# nightly sweep matches against each skip, reading the same file). The floor checks refuse: skipping one says
+# so and the check runs anyway.
+SKIPPABLE=$(awk '!/^#/ && NF { printf "%s ", $1 }' "$(dirname "${BASH_SOURCE[0]}")/../skippable.txt" 2>/dev/null || true)
+SKIPPABLE=${SKIPPABLE% }
 FLOOR="shellcheck actionlint pinned workflow-safety lint-all format-all"
 # The ids, one per line, never glob-expanded.
 skip_ids() { printf '%s\n' "${SKIP_CHECKS:-}" | awk '{ gsub(/[,[:space:]]+/, "\n"); print }' | grep -v '^$' || true; }
