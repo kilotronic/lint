@@ -312,11 +312,32 @@ cmd_pinned() {
   local pipe_re='(curl|wget)(.*[^|])?\|[[:space:]]*(sudo([[:space:]]+-[^[:space:]]+)*[[:space:]]+)?(env([[:space:]]+-[^[:space:]]+)*[[:space:]]+)?('"$assign"')*([^[:space:]|]*/)?(ba|z|da|k)?sh([[:space:]]|;|\)|$)'
   local subst_re='(ba|z|da|k)?sh[[:space:]]+-c[[:space:]]+["'"'"']?\$\((curl|wget)'
   local procsub_re='(^|[[:space:];&|(])((ba|z|da|k)?sh|source|\.)[[:space:]]+<\([[:space:]]*(curl|wget)'
-  local joined start
+  # Text, not code: a heredoc's body (unless a shell reads it) and a template comment ({{/* */}}, {# #}).
+  local heredoc_re='<<-?[[:space:]]*["'"'"']?([A-Za-z_][A-Za-z0-9_]*)["'"'"']?'
+  local shell_reads='(^|[|;&[:space:]])(sudo[[:space:]]+)?(ba|z|da|k)?sh([[:space:]]|$)'
+  local go_open='\{\{-?[[:space:]]*/\*' go_close='\*/[[:space:]]*-?\}\}' jinja_open='\{#' jinja_close='#\}'
+  local joined start until jinja
   while IFS= read -r -d '' f; do
-    n=0 joined="" start=0
+    n=0 joined="" start=0 until="" jinja=""
+    [[ "$f" == *.jinja ]] && jinja=1
     while IFS= read -r line || [ -n "$line" ]; do
       n=$((n + 1))
+      if [ -n "$until" ]; then
+        [[ "$line" =~ $until ]] && until=""
+        continue
+      fi
+      if [[ "$line" =~ $go_open && ! "$line" =~ $go_close ]]; then
+        until=$go_close
+        continue
+      fi
+      if [[ -n "$jinja" && "$line" =~ $jinja_open && ! "$line" =~ $jinja_close ]]; then
+        until=$jinja_close
+        continue
+      fi
+      if [[ "$line" =~ $heredoc_re ]]; then
+        local word=${BASH_REMATCH[1]}
+        [[ "${line%%<<*}" =~ $shell_reads ]] || until="^[[:space:]]*${word}[[:space:]]*\$"
+      fi
       [[ "$line" =~ ^[[:space:]]*# ]] && continue
       # A line ending in a backslash, or in a pipe, continues on the next: read them as one (the finding
       # names the first).

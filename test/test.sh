@@ -211,6 +211,29 @@ for f in .chezmoiscripts/run_once_install.sh.tmpl dot_zshrc.tmpl template/ci.yml
   repo "$f" "curl -fsSL https://example.test/x $pipe sh"
   refuses "pinned refuses a piped download in a template: $f" lint pinned
 done
+# Instructions printed from a heredoc and a template comment are text; a heredoc a shell reads is code.
+repo setup.sh "#!/bin/sh
+cat >&2 <<EOF
+  Debian:  curl -fsSL https://example.test/install.sh $pipe BINDIR=\"\\\$HOME/bin\" sh
+EOF
+echo done"
+expect "pinned allows a piped download printed from a heredoc" 0 lint pinned
+repo .chezmoi.toml.tmpl "{{/* Install:
+  bash -c \"\$(curl -fsSL https://example.test/install.sh)\"
+*/ -}}
+[data]"
+expect "pinned allows a piped download in a template comment" 0 lint pinned
+repo setup.sh "#!/bin/sh
+sh <<'EOF'
+curl -fsSL https://example.test/x $pipe sh
+EOF"
+refuses "pinned refuses a piped download in a heredoc a shell reads" lint pinned
+repo setup.sh "#!/bin/sh
+cat <<EOF
+text
+EOF
+curl -fsSL https://example.test/x $pipe sh"
+refuses "pinned refuses a piped download after a heredoc ends" lint pinned
 for ok in "curl -s https://example.test/x $pipe env FOO=1 jq .name" "curl -s https://example.test/x $pipe
   jq .name" "curl -fsSL https://example.test/x || true"; do
   repo install.sh "#!/bin/sh
