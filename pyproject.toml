@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "kilotronic-lint"
-version = "1.2.0"
+version = "1.2.1"
 description = "The Python side of kilotronic/lint's pre-commit hooks: csv-lint, and yamllint and shfmt with default configurations."
 readme = "README.md"
 requires-python = ">=3.9"
