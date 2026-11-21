@@ -1,5 +1,13 @@
-# Hooks for pre-commit and prek. Each runs the Action's own src/lint.sh step on the repository's tracked
-# files, with the same pinned, checksum-checked shellcheck and actionlint (cached under ~/.cache).
+# Hooks for pre-commit and prek.
+#
+# shellcheck, actionlint, pinned, workflow-safety and non-root run the Action's own src/lint.sh step on the
+# repository's tracked files, with the same pinned, checksum-checked shellcheck and actionlint (cached under
+# ~/.cache).
+#
+# The rest are the format and lint bundle (format-all and lint-all): formatters first, then linters, each at a
+# pinned version. A repository's own configuration file (ruff.toml, .prettierrc, .editorconfig, taplo.toml,
+# .markdownlint*, .yamllint) is used when it has one; otherwise the bundle's defaults. CSV files are linted,
+# never rewritten.
 - id: shellcheck
   name: shellcheck (shell scripts)
   description: shellcheck every tracked shell script (*.sh, *.bash, or a sh/bash shebang).
@@ -17,10 +25,133 @@
   files: ^\.github/(workflows/.*\.ya?ml|actionlint\.ya?ml)$
   stages: [pre-commit, pre-merge-commit, manual]
 - id: pinned
-  name: pinned (actions by commit SHA, base images by digest)
-  description: Every action a workflow uses is pinned to a commit SHA, and every Docker base image to a digest.
+  name: pinned (actions and pre-commit hooks by commit SHA, base images by digest, no piped downloads)
+  description: >-
+    Every action is pinned to a commit SHA, every Docker base image to a digest, every pre-commit rev to a commit
+    SHA with a "# frozen: <tag>" comment, and no download is piped into a shell.
   entry: src/lint.sh hook pinned
   language: script
   pass_filenames: false
-  files: (^\.github/workflows/.*\.ya?ml$|(^|/)action\.ya?ml$|Dockerfile)
+  files: (^\.github/workflows/.*\.ya?ml$|(^|/)action\.ya?ml$|Dockerfile|(^|/)\.pre-commit-config\.ya?ml$|\.(sh|bash|mk)$|(^|/)(GNU)?[Mm]akefile$)
   stages: [pre-commit, pre-merge-commit, manual]
+- id: workflow-safety
+  name: workflow-safety (permissions, secrets, runners, inputs)
+  description: >-
+    Read-only top-level permissions; no pull request code beside secrets; no secret or event text in run:
+    scripts; GitHub's runners for a public repository's pull requests; no skip or force inputs.
+  entry: src/lint.sh hook workflow-safety
+  language: script
+  pass_filenames: false
+  files: (^\.github/workflows/.*\.ya?ml$|(^|/)action\.ya?ml$)
+  stages: [pre-commit, pre-merge-commit, manual]
+- id: non-root
+  name: non-root (containers run as a non-root user)
+  description: Every Dockerfile's final stage runs as a user other than root (args [--skip=non-root] skips it).
+  entry: src/lint.sh hook non-root
+  language: script
+  pass_filenames: false
+  files: Dockerfile
+  stages: [pre-commit, pre-merge-commit, manual]
+
+# --- format-all: formatters (they rewrite files; run them before the linters)
+- id: ruff-format
+  name: ruff format (Python)
+  entry: ruff format
+  language: python
+  additional_dependencies: [ruff==0.17.4]
+  types_or: [python, pyi, jupyter]
+  require_serial: true
+- id: prettier
+  name: prettier (JS, TS, CSS, Markdown, JSON, YAML)
+  entry: prettier --write --ignore-unknown --no-error-on-unmatched-pattern --log-level=warn
+  language: node
+  additional_dependencies: [prettier@3.9.10]
+  types_or: [javascript, jsx, ts, tsx, css, scss, less, markdown, json, yaml]
+  exclude: (^|/)(package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|yarn\.lock)$
+  require_serial: true
+- id: shfmt
+  name: shfmt (shell scripts)
+  entry: kilotronic-shfmt
+  language: python
+  additional_dependencies: [shfmt-py==4.2.0]
+  types: [shell]
+  exclude_types: [zsh]
+- id: taplo-format
+  name: taplo format (TOML)
+  entry: taplo format
+  language: python
+  additional_dependencies: [taplo==0.9.3]
+  types: [toml]
+
+# --- lint-all: linters
+- id: ruff-check
+  name: ruff check (Python)
+  entry: ruff check --fix --exit-non-zero-on-fix
+  language: python
+  additional_dependencies: [ruff==0.17.4]
+  types_or: [python, pyi, jupyter]
+  require_serial: true
+- id: markdownlint
+  name: markdownlint (Markdown)
+  entry: kilotronic-markdownlint
+  language: node
+  additional_dependencies: [markdownlint-cli2@0.24.0]
+  types: [markdown]
+- id: yamllint
+  name: yamllint (YAML)
+  entry: kilotronic-yamllint
+  language: python
+  additional_dependencies: [yamllint==1.38.0]
+  types: [yaml]
+- id: csv-lint
+  name: csv-lint (UTF-8, same columns in every row, a final newline; never rewritten)
+  entry: kilotronic-csv-lint
+  language: python
+  files: (?i)\.(csv|tsv)$
+- id: check-json
+  name: check-json (valid JSON)
+  entry: check-json
+  language: python
+  additional_dependencies: [pre-commit-hooks==6.0.0]
+  types: [json]
+  # JSON with comments, read by tools that allow them
+  exclude: (^|/)(tsconfig[^/]*|jsconfig[^/]*|\.devcontainer/[^/]*|\.vscode/[^/]*)\.json$|\.jsonc$
+- id: check-yaml
+  name: check-yaml (valid YAML)
+  entry: check-yaml --allow-multiple-documents
+  language: python
+  additional_dependencies: [pre-commit-hooks==6.0.0]
+  types: [yaml]
+- id: check-toml
+  name: check-toml (valid TOML)
+  entry: check-toml
+  language: python
+  additional_dependencies: [pre-commit-hooks==6.0.0]
+  types: [toml]
+- id: end-of-file-fixer
+  name: end-of-file-fixer (one newline at the end)
+  entry: end-of-file-fixer
+  language: python
+  additional_dependencies: [pre-commit-hooks==6.0.0]
+  types: [text]
+  exclude: \.(csv|tsv)$
+- id: trailing-whitespace
+  name: trailing-whitespace
+  entry: trailing-whitespace-fixer --markdown-linebreak-ext=md
+  language: python
+  additional_dependencies: [pre-commit-hooks==6.0.0]
+  types: [text]
+  exclude: \.(csv|tsv)$
+- id: mixed-line-ending
+  name: mixed-line-ending (LF)
+  entry: mixed-line-ending --fix=lf
+  language: python
+  additional_dependencies: [pre-commit-hooks==6.0.0]
+  types: [text]
+  exclude: \.(csv|tsv|bat|cmd)$
+- id: check-merge-conflict
+  name: check-merge-conflict (no conflict markers)
+  entry: check-merge-conflict --assume-in-merge
+  language: python
+  additional_dependencies: [pre-commit-hooks==6.0.0]
+  types: [text]

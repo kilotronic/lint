@@ -1,22 +1,35 @@
 name: Lint shell scripts and workflows
-description: shellcheck every tracked shell script, actionlint every workflow, and check that actions and base images are pinned. Pinned tool versions, checked downloads, no configuration needed.
+description: shellcheck every tracked shell script, actionlint every workflow, check that actions, base images and pre-commit hooks are pinned, that workflows keep secrets and runners safe, and that containers run as a non-root user. Pinned tool versions, checked downloads, no configuration needed.
 branding:
   icon: check-square
   color: gray-dark
 
 inputs:
   shellcheck:
-    description: Run shellcheck on tracked shell scripts (*.sh, *.bash, or a sh/bash shebang). Also used by actionlint for run scripts.
+    description: >-
+      Kept for v1 callers. shellcheck (every tracked shell script, and actionlint's run scripts) is a floor check:
+      "false" prints a warning and it runs.
     required: false
     default: "true"
   actionlint:
-    description: Run actionlint on .github/workflows. A .github/actionlint.yaml (e.g. self-hosted runner labels) is used if present.
+    description: >-
+      Kept for v1 callers. actionlint (every workflow; .github/actionlint.yaml is read) is a floor check: "false"
+      prints a warning and it runs.
     required: false
     default: "true"
   pinned:
-    description: Check that every action a workflow uses is pinned to a full commit SHA, and every Docker base image to a digest.
+    description: >-
+      Kept for v1 callers. pinned (actions and pre-commit revs by commit SHA, base images by digest, no piped
+      downloads) is a floor check: "false" prints a warning and it runs.
     required: false
     default: "true"
+  skip:
+    description: >-
+      Checks to skip, by id, separated by commas or spaces. Only non-root can be skipped. The floor checks (shellcheck,
+      actionlint, pinned, workflow-safety, lint-all, format-all) refuse: naming one prints a warning and it runs. An
+      unknown id fails the run.
+    required: false
+    default: ""
   exclude:
     description: >-
       Paths shellcheck and the pinned check skip, as space- or newline-separated git glob patterns (e.g. "vendor/** originals/**").
@@ -38,38 +51,63 @@ runs:
     - name: Install shellcheck and actionlint (pinned, checksums checked)
       id: install
       shell: bash
-      run: bash "$GITHUB_ACTION_PATH/src/lint.sh" install
+      env:
+        SKIP_CHECKS: ${{ inputs.skip }}
+        OFF_INPUTS: ${{ inputs.shellcheck == 'false' && 'shellcheck ' || '' }}${{ inputs.actionlint == 'false' && 'actionlint ' || '' }}${{ inputs.pinned == 'false' && 'pinned' || '' }}
+      run: |
+        for id in $OFF_INPUTS; do
+          echo "::warning::lint: $id is a floor check; its input can't turn it off, so it runs"
+        done
+        bash "$GITHUB_ACTION_PATH/src/lint.sh" install
 
     - name: shellcheck (shell scripts)
       id: shellcheck
-      if: inputs.shellcheck == 'true'
       continue-on-error: true
       shell: bash
       env:
         LINT_BIN: ${{ steps.install.outputs.bin }}
         EXCLUDE: ${{ inputs.exclude }}
         SHELLCHECK_ARGS: ${{ inputs.shellcheck-args }}
+        SKIP_CHECKS: ${{ inputs.skip }}
       run: bash "$GITHUB_ACTION_PATH/src/lint.sh" shellcheck
 
     - name: actionlint (workflows)
       id: actionlint
-      if: inputs.actionlint == 'true'
       continue-on-error: true
       shell: bash
       env:
         LINT_BIN: ${{ steps.install.outputs.bin }}
-        SHELLCHECK: ${{ inputs.shellcheck }}
         ACTIONLINT_ARGS: ${{ inputs.actionlint-args }}
+        SKIP_CHECKS: ${{ inputs.skip }}
       run: bash "$GITHUB_ACTION_PATH/src/lint.sh" actionlint
 
-    - name: pinned (actions by commit SHA, base images by digest)
+    - name: pinned (actions and pre-commit hooks by commit SHA, base images by digest, no piped downloads)
       id: pinned
-      if: inputs.pinned == 'true'
       continue-on-error: true
       shell: bash
       env:
         EXCLUDE: ${{ inputs.exclude }}
+        SKIP_CHECKS: ${{ inputs.skip }}
       run: bash "$GITHUB_ACTION_PATH/src/lint.sh" pinned
+
+    - name: workflow-safety (permissions, secrets, runners, inputs)
+      id: workflow-safety
+      continue-on-error: true
+      shell: bash
+      env:
+        EXCLUDE: ${{ inputs.exclude }}
+        KILOTRONIC_VISIBILITY: ${{ github.event.repository.visibility }}
+        SKIP_CHECKS: ${{ inputs.skip }}
+      run: bash "$GITHUB_ACTION_PATH/src/lint.sh" workflow-safety
+
+    - name: non-root (containers run as a non-root user)
+      id: non-root
+      continue-on-error: true
+      shell: bash
+      env:
+        EXCLUDE: ${{ inputs.exclude }}
+        SKIP_CHECKS: ${{ inputs.skip }}
+      run: bash "$GITHUB_ACTION_PATH/src/lint.sh" non-root
 
     - name: Result
       shell: bash
@@ -77,4 +115,6 @@ runs:
         SHELLCHECK_OUTCOME: ${{ steps.shellcheck.outcome }}
         ACTIONLINT_OUTCOME: ${{ steps.actionlint.outcome }}
         PINNED_OUTCOME: ${{ steps.pinned.outcome }}
+        WORKFLOW_SAFETY_OUTCOME: ${{ steps.workflow-safety.outcome }}
+        NON_ROOT_OUTCOME: ${{ steps.non-root.outcome }}
       run: bash "$GITHUB_ACTION_PATH/src/lint.sh" verdict

@@ -1,0 +1,21 @@
+# The bundle's yamllint rules for a repository without its own .yamllint: yamllint's defaults, minus what
+# prettier already decides (line length, spacing) and GitHub's `on:` key.
+extends: default
+rules:
+  line-length: disable
+  document-start: disable
+  comments:
+    min-spaces-from-content: 1
+  comments-indentation: disable
+  braces:
+    min-spaces-inside: 0
+    max-spaces-inside: 1
+  brackets:
+    min-spaces-inside: 0
+    max-spaces-inside: 1
+  truthy:
+    allowed-values: ["true", "false"]
+    check-keys: false
+  indentation:
+    spaces: consistent
+    indent-sequences: consistent
