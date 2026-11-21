@@ -10,7 +10,8 @@
 #   (step) non-root: every Dockerfile's final stage runs as a user other than root
 #   (step) verdict: fail if any check failed, so all always run and every finding shows in one run
 #   hook <check>: for .pre-commit-hooks.yaml: install into a cache directory, then run that check
-# The Action's skip input (or a hook's --skip=<id>) may skip non-root; the floor checks refuse to be skipped.
+# The Action's skip input (or a hook's --skip=<id>) may skip the ids in skippable.txt; the floor checks refuse
+# to be skipped.
 set -euo pipefail
 
 SHELLCHECK_VERSION=0.11.0
@@ -137,14 +138,40 @@ cmd_actionlint() {
 # the ids in skippable.txt may be skipped (the repository's reason lives in the owner's settings, which the
 # nightly sweep matches against each skip, reading the same file). The floor checks refuse: skipping one says
 # so and the check runs anyway.
-SKIPPABLE=$(awk '!/^#/ && NF { printf "%s ", $1 }' "$(dirname "${BASH_SOURCE[0]}")/../skippable.txt" 2>/dev/null || true)
-SKIPPABLE=${SKIPPABLE% }
 FLOOR="shellcheck actionlint pinned workflow-safety lint-all format-all"
+SKIPPABLE_FILE="$(dirname "${BASH_SOURCE[0]}")/../skippable.txt"
+# load_skippable: SKIPPABLE from skippable.txt (an id per line, optionally `opt-in` after it; # comments), and
+# SKIPPABLE_ERRORS for what can't be used: a missing file (nothing is skippable), a floor id, or a bad line.
+load_skippable() {
+  local line id word extra
+  SKIPPABLE="" SKIPPABLE_ERRORS=""
+  if [ ! -r "$SKIPPABLE_FILE" ]; then
+    SKIPPABLE_ERRORS="lint: can't read $SKIPPABLE_FILE, so nothing can be skipped"
+    return
+  fi
+  while IFS= read -r line || [ -n "$line" ]; do
+    line=${line%$'\r'}
+    read -r id word extra <<<"$line" || true
+    case "$id" in "" | "#"*) continue ;; esac
+    if ! [[ "$id" =~ ^[a-z][a-z0-9-]*$ ]] || { [ -n "$word" ] && [ "$word" != opt-in ]; } || [ -n "$extra" ]; then
+      SKIPPABLE_ERRORS+="${SKIPPABLE_ERRORS:+$'\n'}lint: skippable.txt: bad line (want <id> [opt-in]): $line"
+    elif [[ " $FLOOR " == *" $id "* ]]; then
+      SKIPPABLE_ERRORS+="${SKIPPABLE_ERRORS:+$'\n'}lint: skippable.txt lists $id, a floor check; it can't be skipped"
+    else
+      SKIPPABLE+="${SKIPPABLE:+ }$id"
+    fi
+  done <"$SKIPPABLE_FILE"
+}
+load_skippable
 # The ids, one per line, never glob-expanded.
 skip_ids() { printf '%s\n' "${SKIP_CHECKS:-}" | awk '{ gsub(/[,[:space:]]+/, "\n"); print }' | grep -v '^$' || true; }
 # check_skip_ids: every id is a known check (a typo must not quietly leave a check on, or look like a skip).
 check_skip_ids() {
-  local id bad=0
+  local id bad=0 err
+  if [ -n "$(skip_ids)" ] && [ -n "$SKIPPABLE_ERRORS" ]; then
+    while IFS= read -r err; do echo "::error::$err"; done <<<"$SKIPPABLE_ERRORS"
+    bad=1
+  fi
   while IFS= read -r id; do
     case " $SKIPPABLE $FLOOR " in
       *" $id "*) ;;
@@ -159,7 +186,10 @@ check_skip_ids() {
 # skipped <id> [<floor id>...]: true when the check is skipped. A floor check named in skip says it can't be
 # skipped (once per check) and runs.
 skipped() {
-  local id want warned=false
+  local id want warned=false err
+  if [ -n "$(skip_ids)" ] && [ -n "$SKIPPABLE_ERRORS" ]; then
+    while IFS= read -r err; do echo "::warning::$err"; done <<<"$SKIPPABLE_ERRORS"
+  fi
   while IFS= read -r id; do
     for want in "$@"; do
       [ "$id" = "$want" ] || continue
