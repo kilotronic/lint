@@ -121,8 +121,9 @@ the repository counts as not public; in an Action run that can't tell, the step 
 ## Skipping a check
 
 Only `non-root` can be skipped: `skip: non-root` in the Action, `args: [--skip=non-root]` on the hook (or leave
-the hook out). The reason for a skip lives in the owner's repository settings, which a nightly sweep matches
-against each workflow's `skip:`.
+the hook out). [`skippable.txt`](skippable.txt) is that list, one id per line, read by the checks themselves and
+by the owner's nightly settings sweep (at the commit a repository pins), so the two can't disagree. The reason for
+a skip lives in the owner's repository settings, which that sweep matches against each workflow's `skip:`.
 
 The floor checks can't be skipped: naming `shellcheck`, `actionlint`, `pinned`, `workflow-safety`, `lint-all` or
 `format-all` in `skip` prints a warning and the check runs anyway, and so does setting the v1 inputs

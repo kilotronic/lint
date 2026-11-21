@@ -515,6 +515,25 @@ repo a.txt hi
 expect "an unknown id in SKIP_CHECKS fails the install step" 1 env SKIP_CHECKS="non-rooot" bash "$LINT" install
 expect "a known id passes the install step" 0 env SKIP_CHECKS="non-root" bash "$LINT" install
 expect "a hook refuses an unknown --skip id" 1 lint hook non-root --skip=nope
+# The skippable ids come from skippable.txt (also read by the owner's settings sweep), not a copy in lint.sh.
+mkdir -p "$tmp/copy/src" && cp "$LINT" "$tmp/copy/src/"
+copy() { printf "%b" "$1" >"$tmp/copy/skippable.txt"; }
+repo Dockerfile "FROM scratch"
+copy '# nothing\n'
+refuses "with non-root not in skippable.txt, skipping it is refused" env SKIP_CHECKS="non-root" bash "$tmp/copy/src/lint.sh" non-root
+copy '  # indented comment\r\nnon-root opt-in\r\n'
+expect "an id marked opt-in (CRLF, indented comment) can be skipped" 0 env SKIP_CHECKS="non-root" bash "$tmp/copy/src/lint.sh" non-root
+rm -f "$tmp/copy/skippable.txt"
+refuses "with no skippable.txt, nothing can be skipped" env SKIP_CHECKS="non-root" bash "$tmp/copy/src/lint.sh" non-root
+if grep -q "can't read .*skippable.txt" "$tmp/log"; then pass "a missing skippable.txt is named"; else fail "a missing skippable.txt is named"; fi
+copy 'non-root\nshellcheck\n'
+repo a.sh "$bad_sh"
+refuses "a floor id in skippable.txt is refused: shellcheck still runs" env SKIP_CHECKS="shellcheck" bash "$tmp/copy/src/lint.sh" shellcheck
+if grep -q "skippable.txt lists shellcheck, a floor check" "$tmp/log"; then pass "the floor id in skippable.txt is named"; else fail "the floor id in skippable.txt is named"; fi
+repo a.txt hi
+copy 'non-root sometimes\n'
+expect "an unknown word in skippable.txt fails the install step" 1 env SKIP_CHECKS="non-root" bash "$tmp/copy/src/lint.sh" install
+if grep -q "skippable.txt" "$tmp/log"; then pass "the bad line is named"; else fail "the bad line is named"; fi
 
 # --- review findings: evasions that must be refused, and false alarms that must pass
 # shellcheck disable=SC2016 # the ${{ }} are meant literally: they are the findings
