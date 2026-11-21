@@ -19,7 +19,11 @@ const own = [
   ".markdownlint.mjs",
 ];
 const here = path.dirname(fileURLToPath(import.meta.url));
-const config = own.some((f) => existsSync(f)) ? [] : ["--config", path.join(here, ".markdownlint.jsonc")];
+const config = own.some((f) => existsSync(f))
+  ? []
+  : ["--config", path.join(here, ".markdownlint.jsonc")];
 const files = process.argv.slice(2).map((f) => `:${f}`);
-const run = spawnSync("markdownlint-cli2", [...config, ...files], { stdio: "inherit" });
+const run = spawnSync("markdownlint-cli2", [...config, ...files], {
+  stdio: "inherit",
+});
 process.exit(run.status ?? 1);

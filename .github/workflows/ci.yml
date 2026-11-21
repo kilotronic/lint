@@ -182,7 +182,17 @@ jobs:
   ci:
     name: ci
     runs-on: ubuntu-latest
-    needs: [dogfood, refuses, prek-hooks, unit-tests, bundle, secret-scan, git-identity, data-leak-check]
+    needs:
+      [
+        dogfood,
+        refuses,
+        prek-hooks,
+        unit-tests,
+        bundle,
+        secret-scan,
+        git-identity,
+        data-leak-check,
+      ]
     if: always()
     steps:
       - env:
