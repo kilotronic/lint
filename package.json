@@ -1,6 +1,6 @@
 {
   "name": "kilotronic-lint-hooks",
-  "version": "1.2.1",
+  "version": "1.3.1",
   "description": "The Node side of kilotronic/lint's pre-commit hooks (markdownlint with a default configuration).",
   "license": "MIT",
   "private": true,
