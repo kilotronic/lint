@@ -14,20 +14,20 @@ import { main } from "markdownlint-cli2";
 import jsoncParse from "markdownlint-cli2/parsers/jsonc";
 import yamlParse from "markdownlint-cli2/parsers/yaml";
 
-const whole = [
+const cli2Files = [
   ".markdownlint-cli2.jsonc",
   ".markdownlint-cli2.yaml",
   ".markdownlint-cli2.cjs",
   ".markdownlint-cli2.mjs",
-  ".markdownlint.cjs",
-  ".markdownlint.mjs",
 ];
 // markdownlint-cli2's own order: the first of these that exists is the directory's configuration.
-const layered = [
+const configFiles = [
   ".markdownlint.jsonc",
   ".markdownlint.json",
   ".markdownlint.yaml",
   ".markdownlint.yml",
+  ".markdownlint.cjs",
+  ".markdownlint.mjs",
 ];
 const here = path.dirname(fileURLToPath(import.meta.url));
 const defaults = path.join(here, ".markdownlint.jsonc");
@@ -38,18 +38,32 @@ const params = {
   logMessage: console.log,
   logError: console.error,
 };
-const own = layered.find((f) => existsSync(f));
-if (whole.some((f) => existsSync(f))) {
+// The repository's file as an object; {} when it holds nothing; null when it does not parse (then
+// markdownlint-cli2 reads it itself and reports the error).
+const readOwn = async (file) => {
+  const text = await promises.readFile(file, "utf8");
+  const parse = /\.ya?ml$/.test(file) ? yamlParse : jsoncParse;
+  try {
+    return parse(text) ?? {};
+  } catch {
+    return /^(\s|#.*|\/\/.*)*$/.test(text) ? {} : null;
+  }
+};
+const own = configFiles.find((f) => existsSync(f));
+if (cli2Files.some((f) => existsSync(f)) || /\.[cm]js$/.test(own ?? "")) {
   // used whole
 } else if (!own) {
   params.argv = ["--config", defaults, ...argv];
 } else {
   // Hand markdownlint-cli2 the repository's file with `extends` pointing at the bundle's defaults.
   const ownPath = path.resolve(own);
-  const text = await promises.readFile(ownPath, "utf8");
-  const parse = /\.ya?ml$/.test(own) ? yamlParse : jsoncParse;
-  const config = parse(text);
-  if (config && typeof config === "object" && !("extends" in config)) {
+  const config = await readOwn(ownPath);
+  if (
+    config &&
+    typeof config === "object" &&
+    !Array.isArray(config) &&
+    !("extends" in config)
+  ) {
     const layeredText = JSON.stringify({ extends: defaults, ...config });
     const isOwn = (file) => path.resolve(String(file)) === ownPath;
     // markdownlint reads a .markdownlint.* file with the callback readFile, markdownlint-cli2 its own with

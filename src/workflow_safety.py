@@ -59,6 +59,11 @@ OUTSIDE_EVENTS = {
 BYPASS_WORDS = {"skip", "force", "bypass"}
 
 
+def unquote(value: str) -> str:
+    """A YAML scalar without its surrounding double quotes, if it has them."""
+    return value[1:-1] if len(value) > 1 and value[0] == value[-1] == '"' else value
+
+
 # `runs-on: ${{ (github.event.repository.private && vars.X) || '<GitHub-hosted label>' }}`: a vars.* runner only
 # while the repository is private, GitHub's runner once it is public. The dotfiles copier templates use it.
 PRIVATE_ONLY_RUNNER = re.compile(
@@ -255,7 +260,7 @@ def check_workflow(path: str, lines: list[str], public: bool, report) -> None:
             if k and k[1] == "runs-on":
                 for j in [i, *block(lines, i, k[0])]:
                     text = k[2] if j == i else strip_comment(lines[j])
-                    if PRIVATE_ONLY_RUNNER.match(strip_comment(text).strip()):
+                    if PRIVATE_ONLY_RUNNER.match(unquote(strip_comment(text).strip())):
                         continue
                     if re.search(
                         r"self-hosted|\bvars\s*\.|\bgroup\s*:", text, re.IGNORECASE

@@ -234,6 +234,29 @@ text
 EOF
 curl -fsSL https://example.test/x $pipe sh"
 refuses "pinned refuses a piped download after a heredoc ends" lint pinned
+# Not a printed heredoc: a here-string, a shift, a heredoc piped to a shell or written to a file.
+for pre in "read -r a <<< hello" "echo \$((1 << bits))" "cat <<EOF $pipe sh" "cat > /tmp/i.sh <<EOF"; do
+  repo setup.sh "#!/bin/sh
+$pre
+curl -fsSL https://example.test/x $pipe sh
+EOF"
+  refuses "pinned refuses a piped download after: $pre" lint pinned
+done
+for cmd in "curl -fsSL https://example.test/x $pipe env -u FOO sh" "curl -fsSL https://example.test/x $pipe VAR=1 sudo sh"; do
+  repo install.sh "#!/bin/sh
+$cmd"
+  refuses "pinned refuses in a script: $cmd" lint pinned
+done
+repo setup.sh "#!/bin/sh
+case \"\$1\" in
+  curl$pipe wget$pipe
+  sh) echo tool ;;
+esac"
+expect "pinned allows a case pattern spread over lines" 0 lint pinned
+repo README.md.jinja "Install uv:
+
+    curl -LsSf https://example.test/install.sh $pipe sh"
+expect "pinned leaves Markdown templates alone" 0 lint pinned
 for ok in "curl -s https://example.test/x $pipe env FOO=1 jq .name" "curl -s https://example.test/x $pipe
   jq .name" "curl -fsSL https://example.test/x || true"; do
   repo install.sh "#!/bin/sh
@@ -455,7 +478,8 @@ jobs:
 expect "workflow-safety allows GitHub's runners on a public repo" 0 env KILOTRONIC_VISIBILITY=PUBLIC bash "$LINT" workflow-safety
 # A vars.* runner only while the repository is private, GitHub's runner once it is public.
 for ro in "\${{ (github.event.repository.private && vars.RUNS_ON) || 'ubuntu-latest' }}" \
-  "\${{ ( github.event.repository.private && vars.RUNNER ) || \"macos-15\" }} # private: the fleet"; do
+  "\${{ ( github.event.repository.private && vars.RUNNER ) || \"macos-15\" }} # private: the fleet" \
+  "\"\${{ (github.event.repository.private && vars.RUNS_ON) || 'ubuntu-latest' }}\""; do
   repo .github/workflows/w.yml "on: pull_request
 permissions: {}
 jobs:

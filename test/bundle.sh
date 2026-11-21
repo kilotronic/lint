@@ -208,6 +208,14 @@ for own in '.markdownlint.yaml|MD026: false\n' '.markdownlint.jsonc|// comment\n
   fi
 done
 clean_repo
+printf '# rules to come\n' >.markdownlint.yaml # comments only
+printf '# A\n\n<b>inline HTML</b>\n' >html.md
+git add -A
+if run markdownlint; then pass "a comments-only .markdownlint.yaml gets the bundle's defaults"; else
+  fail "a comments-only .markdownlint.yaml gets the bundle's defaults"
+  sed 's/^/     /' "$tmp/log"
+fi
+clean_repo
 printf 'MD026: false\n' >.markdownlint.yaml
 printf '# A\n\n# B\n' >two.md # MD025, which the bundle's defaults keep on
 git add -A

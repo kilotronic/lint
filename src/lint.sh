@@ -309,12 +309,14 @@ cmd_pinned() {
   # that day. Download, check a checksum, then run. Scripts, workflows, actions, Dockerfiles and Makefiles.
   # After the pipe: sudo and its flags, env and its flags, and VAR=value assignments may come before the shell.
   local assign='[A-Za-z_][A-Za-z0-9_]*=("[^"]*"|'"'"'[^'"'"']*'"'"'|[^[:space:]]*)[[:space:]]+'
-  local pipe_re='(curl|wget)(.*[^|])?\|[[:space:]]*(sudo([[:space:]]+-[^[:space:]]+)*[[:space:]]+)?(env([[:space:]]+-[^[:space:]]+)*[[:space:]]+)?('"$assign"')*([^[:space:]|]*/)?(ba|z|da|k)?sh([[:space:]]|;|\)|$)'
+  local runner='(sudo|env)([[:space:]]+-u[[:space:]]+[^[:space:]]+|[[:space:]]+-[^[:space:]]+)*[[:space:]]+'
+  local pipe_re='(curl|wget)(.*[^|])?\|[[:space:]]*('"$runner"'|'"$assign"')*([^[:space:]|]*/)?(ba|z|da|k)?sh([[:space:]]|;|\)|$)'
   local subst_re='(ba|z|da|k)?sh[[:space:]]+-c[[:space:]]+["'"'"']?\$\((curl|wget)'
   local procsub_re='(^|[[:space:];&|(])((ba|z|da|k)?sh|source|\.)[[:space:]]+<\([[:space:]]*(curl|wget)'
-  # Text, not code: a heredoc's body (unless a shell reads it) and a template comment ({{/* */}}, {# #}).
-  local heredoc_re='<<-?[[:space:]]*["'"'"']?([A-Za-z_][A-Za-z0-9_]*)["'"'"']?'
-  local shell_reads='(^|[|;&[:space:]])(sudo[[:space:]]+)?(ba|z|da|k)?sh([[:space:]]|$)'
+  # Text, not code: the body of a heredoc that `cat` only prints (to stdout or stderr: a line of just
+  # `cat [>&2] <<WORD [>&2]`; one piped on or written to a file may be run), and a template comment
+  # ({{/* */}}, {# #}).
+  local heredoc_re='^[[:space:]]*cat[[:space:]]+([0-9]?>&2[[:space:]]+)?<<-?[[:space:]]*["'"'"']?([A-Za-z_][A-Za-z0-9_]*)["'"'"']?[[:space:]]*([0-9]?>&2)?[[:space:]]*$'
   local go_open='\{\{-?[[:space:]]*/\*' go_close='\*/[[:space:]]*-?\}\}' jinja_open='\{#' jinja_close='#\}'
   local joined start until jinja
   while IFS= read -r -d '' f; do
@@ -335,8 +337,8 @@ cmd_pinned() {
         continue
       fi
       if [[ "$line" =~ $heredoc_re ]]; then
-        local word=${BASH_REMATCH[1]}
-        [[ "${line%%<<*}" =~ $shell_reads ]] || until="^[[:space:]]*${word}[[:space:]]*\$"
+        until="^[[:space:]]*${BASH_REMATCH[2]}[[:space:]]*\$"
+        continue
       fi
       [[ "$line" =~ ^[[:space:]]*# ]] && continue
       # A line ending in a backslash, or in a pipe, continues on the next: read them as one (the finding
@@ -346,7 +348,8 @@ cmd_pinned() {
         joined="$joined${line%\\} "
         continue
       fi
-      if [[ "$line" =~ \|[[:space:]]*$ && ! "$line" =~ \|\|[[:space:]]*$ ]]; then
+      # (a pipe after a download, set off by a space: not a case pattern, a table row or `key: |`)
+      if [[ "$line" =~ (curl|wget).*[[:space:]]\|[[:space:]]*$ && ! "$line" =~ \|\|[[:space:]]*$ ]]; then
         joined="$joined$line "
         continue
       fi
@@ -359,7 +362,9 @@ cmd_pinned() {
   done < <({
     shell_files || true
     # Templates (chezmoi's *.tmpl, copier's *.jinja) become scripts and config when they are applied.
-    git ls-files -z -- '*.tmpl' '**/*.tmpl' '*.jinja' '**/*.jinja' ${EXCLUDE_GLOBS[@]+"${EXCLUDE_GLOBS[@]}"}
+    # (Markdown templates are documentation, like Markdown.)
+    git ls-files -z -- '*.tmpl' '**/*.tmpl' '*.jinja' '**/*.jinja' ':!:*.md.tmpl' ':!:*.md.jinja' \
+      ${EXCLUDE_GLOBS[@]+"${EXCLUDE_GLOBS[@]}"}
     workflow_files
     dockerfiles
     git ls-files -z -- 'Makefile' '**/Makefile' 'GNUmakefile' \
