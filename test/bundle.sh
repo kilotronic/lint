@@ -28,6 +28,9 @@ clean_repo() {
   printf 'import os\n\nprint(os.sep)\n' >a.py
   printf '{ "a": [1, 2], "b": { "c": "d" } }\n' >a.json
   printf '// comments are fine here\n{ "compilerOptions": {} }\n' >tsconfig.json
+  mkdir -p .vscode
+  printf '// and here\n{ "editor.tabSize": 2 }\n' >.vscode/settings.json
+  printf '// ASP.NET Core reads comments here\n{ "Logging": {} }\n' >appsettings.Development.json
   printf 'const a = { b: 1 };\nexport default a;\n' >a.js
   printf 'a {\n  color: red;\n}\n' >a.css
   cat >a.md <<'MD'
@@ -49,6 +52,7 @@ MD
   # shellcheck disable=SC2016 # literal workflow text
   printf '# A workflow as prettier writes it.\non:\n  pull_request:\n  push:\n    branches: [main]\npermissions:\n  contents: read # read only\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo "$X"\n        env:\n          X: "y"\n' >.github/workflows/w.yml
   printf 'list:\n  - a\n  - b: { c: 1 }\nflag: true\n---\nsecond: doc\n' >a.yaml
+  printf '#cloud-config\npackages:\n  - git\n' >user-data.yaml # cloud-init wants no space after the #
   printf '[tool]\na = 1\nb = ["x", "y"]\n' >a.toml
   # shellcheck disable=SC2016
   printf '#!/bin/sh\nif [ -n "$1" ]; then\n  echo "$1"\nfi\n' >a.sh
@@ -100,6 +104,8 @@ defect markdownlint b.md '# A\n\n## B\n\n## B\n' "a repeated sibling heading"
 defect markdownlint b.md '# A\n\n```\necho\n```\n' "a code fence with no language"
 defect yamllint b.yaml 'a: yes\n' "a yes/no boolean"
 defect yamllint b.yaml 'a: 1\na: 2\n' "a repeated key"
+defect yamllint b.yaml '#comment\na: 1\n' "a first-line comment with no space that is not #cloud-config"
+defect yamllint b.yaml '#cloud-config\na: yes\n' "a yes/no boolean in a #cloud-config file"
 defect csv-lint b.csv 'a,b\n1,2,3\n' "a row with an extra column"
 defect csv-lint b.csv 'a,b\n1\n' "a row with a missing column"
 defect csv-lint b.csv 'a,b\n1,2' "a CSV with no final newline"
@@ -127,6 +133,62 @@ cp b.csv "$tmp/b.csv" && cp c.csv "$tmp/c.csv"
 git add -A
 run "" || true
 if cmp -s b.csv "$tmp/b.csv" && cmp -s c.csv "$tmp/c.csv"; then pass "no hook rewrites a CSV file"; else fail "no hook rewrites a CSV file"; fi
+
+# --- a #cloud-config first line is allowed after a UTF-8 byte order mark too
+clean_repo
+printf '\xef\xbb\xbf#cloud-config\npackages:\n  - git\n' >bom-user-data.yaml
+git add -A
+if run yamllint; then pass "yamllint allows #cloud-config after a byte order mark"; else
+  fail "yamllint allows #cloud-config after a byte order mark"
+  sed 's/^/     /' "$tmp/log"
+fi
+
+# --- a file that is all CRLF (a VBA module, a .bat) keeps its line endings; only mixed files are fixed
+clean_repo
+printf 'Attribute VB_Name = "Module1"\r\nSub A()\r\nEnd Sub\r\n' >Module1.bas
+printf 'one\r\ntwo\r\n' >windows.txt
+cp Module1.bas windows.txt "$tmp/"
+git add -A
+if run "" && cmp -s Module1.bas "$tmp/Module1.bas" && cmp -s windows.txt "$tmp/windows.txt"; then
+  pass "files that are all CRLF pass every hook, unchanged"
+else
+  fail "files that are all CRLF pass every hook, unchanged"
+  sed 's/^/     /' "$tmp/log"
+fi
+
+# --- ruff honours the repository's own exclude (prek passes it file names; --force-exclude applies the config)
+clean_repo
+mkdir vendored && printf 'import os\nx=1\n' >vendored/third_party.py
+printf 'extend-exclude = ["vendored"]\n' >ruff.toml
+git add -A
+if run ruff-format && run ruff-check; then pass "ruff skips what ruff.toml's extend-exclude names"; else
+  fail "ruff skips what ruff.toml's extend-exclude names"
+  sed 's/^/     /' "$tmp/log"
+fi
+
+# --- a repository's own exclude: adds to the bundle's skips instead of replacing them
+clean_repo
+printf 'a,b \r\n1,2' >other.csv                             # CSV: never rewritten
+printf '{"lockfileVersion":3}\n' >package-lock.json         # a lockfile: prettier leaves it alone
+printf '// comments\n{ "Logging": {} }\n' >appsettings.json # JSON with comments: check-json skips it
+cp other.csv package-lock.json "$tmp/"
+{
+  echo "repos:"
+  echo "  - repo: $HOOKS"
+  echo "    rev: $(git -C "$HOOKS" rev-parse HEAD)"
+  echo "    hooks:"
+  for h in prettier check-json end-of-file-fixer trailing-whitespace mixed-line-ending; do
+    printf '      - id: %s\n        exclude: ^other/\n' "$h"
+  done
+} >.pre-commit-config.yaml
+git add -A
+if "$RUNNER" run --all-files >"$tmp/log" 2>&1 && cmp -s other.csv "$tmp/other.csv" && cmp -s package-lock.json "$tmp/package-lock.json"; then
+  pass "a repository's own exclude: keeps the bundle's skips"
+else
+  fail "a repository's own exclude: keeps the bundle's skips"
+  sed 's/^/     /' "$tmp/log"
+  git diff | sed 's/^/     /'
+fi
 
 # --- a repository's own configuration wins over the bundle's defaults
 clean_repo

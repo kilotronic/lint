@@ -8,6 +8,9 @@
 # pinned version. A repository's own configuration file (ruff.toml, .prettierrc, .editorconfig, taplo.toml,
 # .markdownlint*, .yamllint) is used when it has one; otherwise the bundle's defaults. CSV files are linted,
 # never rewritten.
+#
+# The bundle's own skips (lockfiles, CSV, JSON with comments) live in `files:` as a negative lookahead, not in
+# `exclude:`, so a repository that sets its own `exclude:` on a hook adds to them instead of replacing them.
 - id: shellcheck
   name: shellcheck (shell scripts)
   description: shellcheck every tracked shell script (*.sh, *.bash, or a sh/bash shebang).
@@ -56,7 +59,7 @@
 # --- format-all: formatters (they rewrite files; run them before the linters)
 - id: ruff-format
   name: ruff format (Python)
-  entry: ruff format
+  entry: ruff format --force-exclude
   language: python
   additional_dependencies: [ruff==0.17.4]
   types_or: [python, pyi, jupyter]
@@ -67,7 +70,7 @@
   language: node
   additional_dependencies: [prettier@3.9.10]
   types_or: [javascript, jsx, ts, tsx, css, scss, less, markdown, json, yaml]
-  exclude: (^|/)(package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|yarn\.lock)$
+  files: ^(?!(.*/)?(package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|yarn\.lock)$)
   require_serial: true
 - id: shfmt
   name: shfmt (shell scripts)
@@ -86,7 +89,7 @@
 # --- lint-all: linters
 - id: ruff-check
   name: ruff check (Python)
-  entry: ruff check --fix --exit-non-zero-on-fix
+  entry: ruff check --fix --exit-non-zero-on-fix --force-exclude
   language: python
   additional_dependencies: [ruff==0.17.4]
   types_or: [python, pyi, jupyter]
@@ -114,8 +117,8 @@
   language: python
   additional_dependencies: [pre-commit-hooks==6.0.0]
   types: [json]
-  # JSON with comments, read by tools that allow them
-  exclude: (^|/)(tsconfig[^/]*|jsconfig[^/]*|\.devcontainer/[^/]*|\.vscode/[^/]*)\.json$|\.jsonc$
+  # JSON with comments, read by tools that allow them (prettier still parses these, so broken syntax still fails)
+  files: ^(?!((.*/)?(tsconfig[^/]*|jsconfig[^/]*|appsettings[^/]*|\.devcontainer/[^/]*|\.vscode/[^/]*)\.json|.*\.jsonc)$)
 - id: check-yaml
   name: check-yaml (valid YAML)
   entry: check-yaml --allow-multiple-documents
@@ -134,21 +137,23 @@
   language: python
   additional_dependencies: [pre-commit-hooks==6.0.0]
   types: [text]
-  exclude: \.(csv|tsv)$
+  files: (?i)^(?!.*\.(csv|tsv)$)
 - id: trailing-whitespace
   name: trailing-whitespace
   entry: trailing-whitespace-fixer --markdown-linebreak-ext=md
   language: python
   additional_dependencies: [pre-commit-hooks==6.0.0]
   types: [text]
-  exclude: \.(csv|tsv)$
+  files: (?i)^(?!.*\.(csv|tsv)$)
 - id: mixed-line-ending
-  name: mixed-line-ending (LF)
-  entry: mixed-line-ending --fix=lf
+  name: mixed-line-ending (one line ending in each file)
+  # A file mixing LF and CRLF gets the ending most of its lines use; a file that is all CRLF (a .bat, a VBA
+  # module, a .sln) is left as it is.
+  entry: mixed-line-ending --fix=auto
   language: python
   additional_dependencies: [pre-commit-hooks==6.0.0]
   types: [text]
-  exclude: \.(csv|tsv|bat|cmd)$
+  files: (?i)^(?!.*\.(csv|tsv)$)
 - id: check-merge-conflict
   name: check-merge-conflict (no conflict markers)
   entry: check-merge-conflict --assume-in-merge
