@@ -1,0 +1,12 @@
+// The bundle's markdownlint rules for a repository without its own configuration: markdownlint's defaults,
+// minus what prettier already decides (line length, table layout) and what docs here use on purpose.
+{
+  "default": true,
+  "MD013": false, // line length: prettier wraps prose where the repository asks it to
+  "MD024": { "siblings_only": true }, // the same heading under different parents
+  "MD033": false, // inline HTML
+  "MD041": false, // a file need not open with a heading
+  "MD055": false, // table pipe style: prettier's
+  "MD056": false, // table column count: prettier's
+  "MD060": false, // table column style: prettier's
+}

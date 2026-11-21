@@ -3,9 +3,14 @@
 #   (step) install: install the pinned shellcheck and actionlint (checksums checked) into $LINT_BIN
 #   (step) shellcheck: check every tracked shell script (*.sh, *.bash, or a sh/bash shebang), minus EXCLUDE
 #   (step) actionlint: check the workflows in .github/workflows (their run: scripts through shellcheck too)
-#   (step) pinned: every action used is pinned to a commit SHA, every Docker base image to a digest
-#   (step) verdict: fail if any check failed, so both always run and every finding shows in one run
-#   hook <check>: for .pre-commit-hooks.yaml: install into a cache directory, then run shellcheck, actionlint or pinned
+#   (step) pinned: every action used is pinned to a commit SHA, every Docker base image to a digest, every
+#          pre-commit rev to a commit SHA with a "# frozen: <tag>" comment, and no download is piped into a shell
+#   (step) workflow-safety: read-only top-level permissions, no pull request code beside secrets, no secret or
+#          event text in run: scripts, GitHub's runners for a public repo's pull requests, no skip/force inputs
+#   (step) non-root: every Dockerfile's final stage runs as a user other than root
+#   (step) verdict: fail if any check failed, so all always run and every finding shows in one run
+#   hook <check>: for .pre-commit-hooks.yaml: install into a cache directory, then run that check
+# The Action's skip input (or a hook's --skip=<id>) may skip non-root; the floor checks refuse to be skipped.
 set -euo pipefail
 
 SHELLCHECK_VERSION=0.11.0
@@ -67,6 +72,7 @@ install_tools() {
 }
 
 cmd_install() {
+  check_skip_ids
   install_tools
   "$LINT_BIN/shellcheck" --version | sed -n 2p
   echo "actionlint $("$LINT_BIN/actionlint" --version | head -1)"
@@ -93,6 +99,7 @@ cmd_shellcheck() {
     echo "::error::lint needs a checkout (run actions/checkout first)"
     exit 1
   fi
+  skipped shellcheck lint-all || true
   local files=() # (no mapfile: macOS runners ship bash 3.2)
   while IFS= read -r -d '' f; do files+=("$f"); done < <(shell_files)
   if [ "${#files[@]}" -eq 0 ]; then
@@ -107,16 +114,80 @@ cmd_shellcheck() {
 }
 
 cmd_actionlint() {
+  skipped actionlint lint-all || true
   if [ ! -d .github/workflows ]; then
     echo "actionlint: no .github/workflows"
     return 0
   fi
   # .github/actionlint.yaml (e.g. self-hosted runner labels) is read by actionlint itself.
-  local sc="${LINT_BIN:?}/shellcheck"
-  [ "${SHELLCHECK:-true}" = true ] || sc=""
+  local sc="${LINT_BIN:?}/shellcheck" # always: shellcheck on run: scripts is part of the floor
   local extra=()
   read -r -a extra <<<"${ACTIONLINT_ARGS:-}" # split on spaces; no quoting
   "$LINT_BIN/actionlint" -shellcheck="$sc" -pyflakes= ${extra[@]+"${extra[@]}"}
+}
+
+# Skipping a check: the Action's skip input (SKIP_CHECKS) or a hook's --skip=<id>, a list of check ids. Only
+# non-root may be skipped (the repository's reason lives in the owner's settings, which the nightly sweep
+# matches against each skip). The floor checks refuse: skipping one says so and the check runs anyway.
+SKIPPABLE="non-root"
+FLOOR="shellcheck actionlint pinned workflow-safety lint-all format-all"
+# The ids, one per line, never glob-expanded.
+skip_ids() { printf '%s\n' "${SKIP_CHECKS:-}" | awk '{ gsub(/[,[:space:]]+/, "\n"); print }' | grep -v '^$' || true; }
+# check_skip_ids: every id is a known check (a typo must not quietly leave a check on, or look like a skip).
+check_skip_ids() {
+  local id bad=0
+  while IFS= read -r id; do
+    case " $SKIPPABLE $FLOOR " in
+      *" $id "*) ;;
+      *) echo "::error::lint: unknown check id in skip: $id (known, in lower case: $SKIPPABLE $FLOOR)"; bad=1 ;;
+    esac
+  done < <(skip_ids)
+  return "$bad"
+}
+# skipped <id> [<floor id>...]: true when the check is skipped. A floor check named in skip says it can't be
+# skipped (once per check) and runs.
+skipped() {
+  local id want warned=false
+  while IFS= read -r id; do
+    for want in "$@"; do
+      [ "$id" = "$want" ] || continue
+      case " $SKIPPABLE " in
+        *" $id "*) echo "$1: skipped (skip: $id)"; return 0 ;;
+        *) $warned || echo "::warning::lint: $id is a floor check; it can't be skipped, so $1 runs"; warned=true ;;
+      esac
+    done
+  done < <(skip_ids)
+  return 1
+}
+
+# PUBLIC, PRIVATE, INTERNAL or UNKNOWN. KILOTRONIC_VISIBILITY when given (the Action passes the event's), else asked
+# of gh once and kept in the clone's git directory for a day; UNKNOWN (offline, no gh) counts as not public.
+visibility() {
+  if [ -n "${KILOTRONIC_VISIBILITY:-}" ]; then
+    echo "$KILOTRONIC_VISIBILITY" | tr '[:lower:]' '[:upper:]'
+    return
+  fi
+  local dir cache v
+  dir=$(git rev-parse --git-common-dir 2>/dev/null) || { echo UNKNOWN; return; }
+  cache="$dir/kilotronic-visibility"
+  if [ -s "$cache" ] && [ -n "$(find "$cache" -mtime -1 2>/dev/null)" ]; then
+    cat "$cache"
+    return
+  fi
+  if v=$(gh repo view --json visibility -q .visibility 2>/dev/null) && [[ "$v" =~ ^(PUBLIC|PRIVATE|INTERNAL)$ ]]; then
+    echo "$v" >"$cache"
+    echo "$v"
+  else
+    echo UNKNOWN
+  fi
+}
+
+workflow_files() {
+  git ls-files -z -- '.github/workflows/*.yml' '.github/workflows/*.yaml' 'action.yml' 'action.yaml' \
+    '**/action.yml' '**/action.yaml' ${EXCLUDE_GLOBS[@]+"${EXCLUDE_GLOBS[@]}"}
+}
+dockerfiles() {
+  git ls-files -z -- '**Dockerfile*' '*.Dockerfile' '**/*.Dockerfile' 'Dockerfile*' ${EXCLUDE_GLOBS[@]+"${EXCLUDE_GLOBS[@]}"}
 }
 
 # Every action a workflow uses is pinned to a full commit SHA (a tag or branch can be moved to other code),
@@ -125,6 +196,7 @@ cmd_actionlint() {
 # on the line just above a Dockerfile's FROM (a Dockerfile allows comments only on their own line).
 cmd_pinned() {
   local bad=0 f line n
+  skipped pinned lint-all format-all || true
   while IFS= read -r -d '' f; do
     n=0
     while IFS= read -r line || [ -n "$line" ]; do
@@ -140,8 +212,7 @@ cmd_pinned() {
       echo "$f:$n: not pinned to a commit SHA: $ref"
       bad=1
     done <"$f"
-  done < <(git ls-files -z -- '.github/workflows/*.yml' '.github/workflows/*.yaml' 'action.yml' 'action.yaml' \
-    '**/action.yml' '**/action.yaml' ${EXCLUDE_GLOBS[@]+"${EXCLUDE_GLOBS[@]}"})
+  done < <(workflow_files)
   while IFS= read -r -d '' f; do
     local stages=" " n=0 prev=""
     while IFS= read -r line || [ -n "$line" ]; do
@@ -160,8 +231,113 @@ cmd_pinned() {
       shopt -u nocasematch
       prev="$line"
     done <"$f"
-  done < <(git ls-files -z -- '**Dockerfile*' '*.Dockerfile' '**/*.Dockerfile' 'Dockerfile*' ${EXCLUDE_GLOBS[@]+"${EXCLUDE_GLOBS[@]}"})
-  [ "$bad" = 0 ] && echo "pinned: every action is pinned to a commit SHA and every base image to a digest"
+  done < <(dockerfiles)
+  # pre-commit: a tag can be moved, so every rev is a commit SHA, with its tag kept as "# frozen: <tag>"
+  # (what `pre-commit autoupdate --freeze` writes). `repo: local` and `repo: meta` have no rev.
+  local rev_re='(^|[{,[:space:]])rev:[[:space:]]*["'"'"']?([^"'"'"',}[:space:]#]*)'
+  local frozen_re='#[[:space:]]*frozen:[[:space:]]*[^[:space:]]'
+  while IFS= read -r -d '' f; do
+    n=0
+    while IFS= read -r line || [ -n "$line" ]; do
+      n=$((n + 1))
+      [[ "$line" =~ ^[[:space:]]*# ]] && continue
+      [[ "$line" =~ $rev_re ]] || continue
+      local rev="${BASH_REMATCH[2]}"
+      [[ "$line" == *"# unpinned-ok:"* ]] && continue
+      if ! [[ "$rev" =~ ^[0-9a-f]{40}$ ]]; then
+        echo "$f:$n: pre-commit rev not pinned to a commit SHA (rev: <sha> # frozen: <tag>): $rev"
+        bad=1
+      elif ! [[ "$line" =~ $frozen_re ]]; then
+        echo "$f:$n: pre-commit rev has no \"# frozen: <tag>\" comment saying which release it is"
+        bad=1
+      fi
+    done <"$f"
+  done < <(git ls-files -z -- '.pre-commit-config.yaml' '.pre-commit-config.yml' '**/.pre-commit-config.yaml' \
+    '**/.pre-commit-config.yml' ${EXCLUDE_GLOBS[@]+"${EXCLUDE_GLOBS[@]}"})
+  # No download piped into a shell (curl ... | sh, sh -c "$(curl ...)"): it runs whatever the server sends
+  # that day. Download, check a checksum, then run. Scripts, workflows, actions, Dockerfiles and Makefiles.
+  local pipe_re='(curl|wget)(.*[^|])?\|[[:space:]]*(sudo([[:space:]]+-[^[:space:]]+)*[[:space:]]+)?(env[[:space:]]+)?([^[:space:]|]*/)?(ba|z|da|k)?sh([[:space:]]|;|\)|$)'
+  local subst_re='(ba|z|da|k)?sh[[:space:]]+-c[[:space:]]+["'"'"']?\$\((curl|wget)'
+  local procsub_re='(^|[[:space:];&|(])((ba|z|da|k)?sh|source|\.)[[:space:]]+<\([[:space:]]*(curl|wget)'
+  local joined start
+  while IFS= read -r -d '' f; do
+    n=0 joined="" start=0
+    while IFS= read -r line || [ -n "$line" ]; do
+      n=$((n + 1))
+      [[ "$line" =~ ^[[:space:]]*# ]] && continue
+      # A line ending in a backslash continues on the next: read them as one (the finding names the first).
+      [ -z "$joined" ] && start=$n
+      if [[ "$line" == *\\ ]]; then
+        joined="$joined${line%\\} "
+        continue
+      fi
+      line="$joined$line" joined=""
+      [[ "$line" =~ $pipe_re || "$line" =~ $subst_re || "$line" =~ $procsub_re ]] || continue
+      [[ "$line" == *"# unpinned-ok:"* ]] && continue
+      echo "$f:$start: a download piped into a shell; download it, check its checksum, then run it"
+      bad=1
+    done <"$f"
+  done < <({ shell_files || true; workflow_files; dockerfiles; git ls-files -z -- 'Makefile' '**/Makefile' 'GNUmakefile' \
+    '**/GNUmakefile' '*.mk' '**/*.mk' ${EXCLUDE_GLOBS[@]+"${EXCLUDE_GLOBS[@]}"}; } | sort -zu)
+  [ "$bad" = 0 ] && echo "pinned: actions by commit SHA, base images by digest, pre-commit revs by commit, no piped downloads"
+  return "$bad"
+}
+
+# workflow-safety (src/workflow_safety.py): the workflow rules that keep secrets and runners out of reach.
+cmd_workflow_safety() {
+  local bad=0 files=() f args=() vis
+  skipped workflow-safety || true
+  while IFS= read -r -d '' f; do files+=("$f"); done < <(workflow_files)
+  if [ "${#files[@]}" -eq 0 ]; then
+    echo "workflow-safety: no workflows"
+    return "$bad"
+  fi
+  vis=$(visibility)
+  [ "$vis" = PUBLIC ] && args+=(--public)
+  if [ "$vis" = UNKNOWN ] && [ "${GITHUB_ACTIONS:-}" = true ]; then
+    echo "::warning::workflow-safety: this event does not say whether the repository is public; the public-runner rule was not checked"
+  fi
+  python3 "$(dirname "${BASH_SOURCE[0]}")/workflow_safety.py" ${args[@]+"${args[@]}"} "${files[@]}" || bad=1
+  [ "$bad" = 0 ] && echo "workflow-safety: ${#files[@]} files, nothing found"
+  return "$bad"
+}
+
+# non-root: every Dockerfile's final stage sets a USER other than root (a container runs as root otherwise).
+# A Dockerfile that builds an image nothing runs from says why with "# non-root-ok: <reason>" on its own line;
+# a repository can skip the check (the Action's skip input, a hook's --skip=non-root).
+cmd_non_root() {
+  local bad=0 f line n
+  if skipped non-root; then return 0; fi
+  local user_re='^[[:space:]]*[Uu][Ss][Ee][Rr][[:space:]]+([^[:space:]]+)'
+  local ok_re='^[[:space:]]*#[[:space:]]*non-root-ok:[[:space:]]*[^[:space:]]'
+  while IFS= read -r -d '' f; do
+    # A stage starts as the user of the stage it is built FROM (or nonroot for an image tagged :nonroot);
+    # "alias=user" pairs, one per line (bash 3.2 has no associative arrays).
+    local user="" last_from=0 exempt=false stages="" alias="" image
+    local stage_re='^[[:space:]]*[Ff][Rr][Oo][Mm][[:space:]]+(--[^[:space:]]+[[:space:]]+)*([^[:space:]]+)([[:space:]]+[Aa][Ss][[:space:]]+([^[:space:]]+))?'
+    n=0
+    while IFS= read -r line || [ -n "$line" ]; do
+      n=$((n + 1))
+      if [[ "$line" =~ $ok_re ]]; then exempt=true
+      elif [[ "$line" =~ $stage_re ]]; then
+        [ -n "$alias" ] && stages="$stages$alias=$user"$'\n'
+        image="${BASH_REMATCH[2]}" alias="${BASH_REMATCH[4]}" last_from=$n user=""
+        local pair
+        while IFS= read -r pair; do
+          [ "$(echo "${pair%%=*}" | tr '[:upper:]' '[:lower:]')" = "$(echo "$image" | tr '[:upper:]' '[:lower:]')" ] && user="${pair#*=}"
+        done <<<"$stages"
+        [[ -z "$user" && "$image" == *:nonroot* ]] && user=nonroot
+      elif [[ "$line" =~ $user_re ]]; then user="${BASH_REMATCH[1]}"
+      fi
+    done <"$f"
+    $exempt && continue
+    [ "$last_from" -gt 0 ] || continue
+    case "$user" in
+      "") echo "$f:$last_from: the final stage runs as root: add USER <name> after its FROM"; bad=1 ;;
+      root | 0 | root:* | 0:*) echo "$f:$last_from: the final stage runs as root (USER $user)"; bad=1 ;;
+    esac
+  done < <(dockerfiles)
+  [ "$bad" = 0 ] && echo "non-root: every Dockerfile's final stage runs as a user other than root"
   return "$bad"
 }
 
@@ -170,11 +346,13 @@ cmd_verdict() {
   [ "${SHELLCHECK_OUTCOME:-}" = failure ] && failed+=(shellcheck)
   [ "${ACTIONLINT_OUTCOME:-}" = failure ] && failed+=(actionlint)
   [ "${PINNED_OUTCOME:-}" = failure ] && failed+=(pinned)
+  [ "${WORKFLOW_SAFETY_OUTCOME:-}" = failure ] && failed+=(workflow-safety)
+  [ "${NON_ROOT_OUTCOME:-}" = failure ] && failed+=(non-root)
   if [ "${#failed[@]}" -gt 0 ]; then
     echo "::error::lint: ${failed[*]} found something (see the steps above)"
     exit 1
   fi
-  echo "lint: nothing found (shellcheck: ${SHELLCHECK_OUTCOME:-off}, actionlint: ${ACTIONLINT_OUTCOME:-off}, pinned: ${PINNED_OUTCOME:-off})"
+  echo "lint: nothing found (shellcheck: ${SHELLCHECK_OUTCOME:-off}, actionlint: ${ACTIONLINT_OUTCOME:-off}, pinned: ${PINNED_OUTCOME:-off}, workflow-safety: ${WORKFLOW_SAFETY_OUTCOME:-off}, non-root: ${NON_ROOT_OUTCOME:-off})"
 }
 
 # A pre-commit/prek hook: the same check as the Action's step, on the repository's tracked files.
@@ -183,19 +361,21 @@ cmd_hook() {
   local check="${1:-}" arg
   case "$check" in
     shellcheck | actionlint) install_tools ;;
-    pinned) ;;
-    *) echo "usage: lint.sh hook shellcheck|actionlint|pinned [--exclude=<glob>]..." >&2; exit 2 ;;
+    pinned | workflow-safety | non-root) ;;
+    *) echo "usage: lint.sh hook shellcheck|actionlint|pinned|workflow-safety|non-root [--exclude=<glob>]..." >&2; exit 2 ;;
   esac
   shift
   for arg in "$@"; do
     case "$arg" in
       --exclude=*) EXCLUDE_GLOBS+=(":(exclude,glob)${arg#--exclude=}") ;;
+      --skip=*) SKIP_CHECKS="${SKIP_CHECKS:-} ${arg#--skip=}" ;;
       *) echo "lint: unknown hook argument: $arg" >&2; exit 2 ;;
     esac
   done
-  "cmd_$check"
+  check_skip_ids >&2 || exit 2
+  "cmd_${check//-/_}"
 }
 
-check="${1:?usage: lint.sh install|shellcheck|actionlint|pinned|verdict|hook <check>}"
+check="${1:?usage: lint.sh install|shellcheck|actionlint|pinned|workflow-safety|non-root|verdict|hook <check>}"
 shift
-"cmd_$check" "$@"
+"cmd_${check//-/_}" "$@"
