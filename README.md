@@ -132,11 +132,13 @@ The floor checks can't be skipped: naming `shellcheck`, `actionlint`, `pinned`, 
 
 - **Self-hosted runner labels:** actionlint reports labels it doesn't know. List yours in
   `.github/actionlint.yaml`:
+
   ```yaml
   self-hosted-runner:
     labels:
       - azure
   ```
+
 - **shellcheck options:** a `.shellcheckrc` in the repository applies as usual.
 - **A line that can't carry its own pin:** for example a Docker build context whose digest the build
   command supplies. Say why with `# unpinned-ok: <reason>`: at the end of the workflow's `uses:` line, a
