@@ -65,7 +65,7 @@ your `.pre-commit-config.yaml`:
 ```yaml
 repos:
   - repo: https://github.com/kilotronic/lint
-    rev: <commit of the release> # frozen: v1.2.1
+    rev: <commit of the release> # frozen: v1.3.1
     hooks:
       # format-all: formatters, which rewrite files (first, so the linters see the result)
       - id: ruff-format # Python
