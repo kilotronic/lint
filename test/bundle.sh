@@ -134,6 +134,15 @@ git add -A
 run "" || true
 if cmp -s b.csv "$tmp/b.csv" && cmp -s c.csv "$tmp/c.csv"; then pass "no hook rewrites a CSV file"; else fail "no hook rewrites a CSV file"; fi
 
+# --- a #cloud-config first line is allowed after a UTF-8 byte order mark too
+clean_repo
+printf '\xef\xbb\xbf#cloud-config\npackages:\n  - git\n' >bom-user-data.yaml
+git add -A
+if run yamllint; then pass "yamllint allows #cloud-config after a byte order mark"; else
+  fail "yamllint allows #cloud-config after a byte order mark"
+  sed 's/^/     /' "$tmp/log"
+fi
+
 # --- a file that is all CRLF (a VBA module, a .bat) keeps its line endings; only mixed files are fixed
 clean_repo
 printf 'Attribute VB_Name = "Module1"\r\nSub A()\r\nEnd Sub\r\n' >Module1.bas

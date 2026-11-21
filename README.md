@@ -115,7 +115,7 @@ allows, or add its path to the hook's `exclude:`.
 **Your own `exclude:`.** The bundle's own skips (lockfiles for prettier, CSV for the fixers, JSON with comments
 for check-json) are in each hook's `files:`, so setting `exclude:` on a hook in your config adds to them instead
 of replacing them. (Setting `files:` does replace them.) ruff hooks also honour `exclude` / `extend-exclude` in
-your ruff configuration.
+your ruff configuration, and ruff's own default skips (`build/`, `dist/`, `.venv/`, `node_modules/` and the like).
 
 The `lint.sh` hooks (`shellcheck`, `actionlint`, `pinned`, `workflow-safety`, `non-root`) run the Action's own
 step on all of the repository's tracked files, so a commit is checked the way CI will check it. shellcheck and

@@ -25,7 +25,9 @@ def _allow_cloud_config(linter) -> None:
         if isinstance(source, io.IOBase):
             source = source.read()
         text = (
-            source.decode("utf-8", "replace") if isinstance(source, bytes) else source
+            source.decode("utf-8-sig", "replace")
+            if isinstance(source, bytes)
+            else source.removeprefix("\ufeff")
         )
         problems = run(source, conf, filepath)
         if not CLOUD_CONFIG.match(text):
