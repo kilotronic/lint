@@ -349,7 +349,7 @@ cmd_pinned() {
         continue
       fi
       # (a pipe after a download, set off by a space: not a case pattern, a table row or `key: |`)
-      if [[ "$line" =~ (curl|wget).*[[:space:]]\|[[:space:]]*$ && ! "$line" =~ \|\|[[:space:]]*$ ]]; then
+      if [[ "$joined$line" =~ (curl|wget).*[[:space:]]\|[[:space:]]*$ && ! "$line" =~ \|\|[[:space:]]*$ ]]; then
         joined="$joined$line "
         continue
       fi
@@ -359,10 +359,11 @@ cmd_pinned() {
       echo "$f:$start: a download piped into a shell; download it, check its checksum, then run it"
       bad=1
     done <"$f"
+    # Files read: scripts, templates (chezmoi *.tmpl, copier *.jinja: they become scripts and config when
+    # applied; Markdown templates are documentation), workflows, actions, Dockerfiles and Makefiles. No comments
+    # inside the block below: bash 3.2 misreads a comment inside a process substitution.
   done < <({
     shell_files || true
-    # Templates (chezmoi's *.tmpl, copier's *.jinja) become scripts and config when they are applied.
-    # (Markdown templates are documentation, like Markdown.)
     git ls-files -z -- '*.tmpl' '**/*.tmpl' '*.jinja' '**/*.jinja' ':!:*.md.tmpl' ':!:*.md.jinja' \
       ${EXCLUDE_GLOBS[@]+"${EXCLUDE_GLOBS[@]}"}
     workflow_files

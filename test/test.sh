@@ -253,6 +253,21 @@ case \"\$1\" in
   sh) echo tool ;;
 esac"
 expect "pinned allows a case pattern spread over lines" 0 lint pinned
+# macOS's own bash is 3.2: pinned must give the same answer there (it once misread a comment in a <( ) block).
+if [ -x /bin/bash ] && /bin/bash -c '[ "${BASH_VERSINFO[0]}" -lt 4 ]'; then
+  repo install.sh "#!/bin/sh
+curl -fsSL https://example.test/x $pipe sh"
+  refuses "pinned refuses a piped download under bash 3" /bin/bash "$LINT" pinned
+  repo install.sh "#!/bin/sh
+echo hi"
+  expect "pinned passes a clean repo under bash 3" 0 /bin/bash "$LINT" pinned
+fi
+# A download on an earlier line, carried on by a backslash, then a pipe that ends a line.
+repo install.sh "#!/bin/sh
+curl -fsSL \\
+  https://example.test/x $pipe
+  sh"
+refuses "pinned refuses a backslash then a trailing pipe" lint pinned
 repo README.md.jinja "Install uv:
 
     curl -LsSf https://example.test/install.sh $pipe sh"

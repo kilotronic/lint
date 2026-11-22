@@ -46,7 +46,9 @@ const readOwn = async (file) => {
   try {
     return parse(text) ?? {};
   } catch {
-    return /^(\s|#.*|\/\/.*)*$/.test(text) ? {} : null;
+    return text.split(/\r?\n/).every((l) => /^\s*(#|\/\/|$)/.test(l))
+      ? {}
+      : null;
   }
 };
 const own = configFiles.find((f) => existsSync(f));
