@@ -10,8 +10,9 @@ The Action runs five checks:
 - **pinned**: every action a workflow uses is pinned to a full commit SHA (a tag or branch can be moved to
   other code), every Docker base image to a digest (`image@sha256:...`), every pre-commit hook's `rev:` to a
   commit SHA with its tag as a `# frozen: <tag>` comment (what `pre-commit autoupdate --freeze` writes), and no
-  download is piped into a shell (`curl ... | sh`, `sh -c "$(curl ...)"`, `bash <(curl ...)`, also across a
-  backslash-continued line) in a script, workflow, action, Dockerfile or Makefile.
+  download is piped into a shell (`curl ... | sh`, `curl ... | env VAR=x sh`, `curl ... | VAR=x sh`,
+  `sh -c "$(curl ...)"`, `bash <(curl ...)`, also across a line continued by a backslash or a trailing pipe)
+  in a script, workflow, action, Dockerfile, Makefile or template (`*.tmpl`, `*.jinja`).
 - **workflow-safety**, on every workflow:
   - a top-level `permissions:` that grants nothing beyond read (`contents: read`, `{}` or `read-all`); a job that
     needs write asks for it itself;
@@ -24,7 +25,10 @@ The Action runs five checks:
     too), where the text becomes code: pass it through `env:` and use `"$NAME"`;
   - on a public repository, a workflow that pull requests or comments can start (or a reusable one, which such
     a workflow may call, even if only push workflows call it today) runs only on GitHub's runners: no `self-hosted` label anywhere outside a script (a
-    matrix value included), no runner group and no `vars.*` runner choice;
+    matrix value included), no runner group and no `vars.*` runner choice. One guard is allowed, since it can
+    only pick the `vars.*` runner while the repository is private:
+    `runs-on: ${{ (github.event.repository.private && vars.RUNS_ON) || 'ubuntu-latest' }}` (any `vars.*` name,
+    and a GitHub-hosted `ubuntu-*`, `windows-*` or `macos-*` label after `||`);
   - no `workflow_dispatch` input that skips or forces the checks (a name with the word `skip`, `force` or
     `bypass`, or `no-verify`).
 - **non-root**: every Dockerfile's final stage runs as a user other than root: its own `USER`, the user of the
@@ -65,7 +69,7 @@ your `.pre-commit-config.yaml`:
 ```yaml
 repos:
   - repo: https://github.com/kilotronic/lint
-    rev: <commit of the release> # frozen: v1.3.1
+    rev: <commit of the release> # frozen: v1.3.2
     hooks:
       # format-all: formatters, which rewrite files (first, so the linters see the result)
       - id: ruff-format # Python
@@ -102,7 +106,7 @@ checked the same way at commit time and in CI.
 | `prettier`                  | prettier 3.9.10          | prettier's defaults (`.prettierrc`, `.prettierignore` win); lockfiles skipped                                                                                                                                              |
 | `shfmt`                     | shfmt-py 4.2.0           | `-i 2 -ci -bn`; a `.editorconfig` replaces them                                                                                                                                                                            |
 | `taplo-format`              | taplo 0.9.3              | taplo's defaults (`taplo.toml` / `.taplo.toml` win)                                                                                                                                                                        |
-| `markdownlint`              | markdownlint-cli2 0.24.0 | [`src/markdownlint/.markdownlint.jsonc`](src/markdownlint/.markdownlint.jsonc): line length and table layout left to prettier                                                                                              |
+| `markdownlint`              | markdownlint-cli2 0.24.0 | [`src/markdownlint/.markdownlint.jsonc`](src/markdownlint/.markdownlint.jsonc): line length and table layout left to prettier; a repository's `.markdownlint.*` adds to it (below)                                         |
 | `yamllint`                  | yamllint 1.38.0          | [`src/kilotronic_lint/yamllint.yaml`](src/kilotronic_lint/yamllint.yaml): spacing left to prettier, `on:` allowed; a `#cloud-config` first line is allowed either way                                                      |
 | `csv-lint`                  | this repository          | none needed; prints where, never a cell's text                                                                                                                                                                             |
 | `check-*`, fixers           | pre-commit-hooks 6.0.0   | CSV/TSV files are never rewritten; `check-json` skips JSON-with-comments files (below); `mixed-line-ending` fixes a file that mixes LF and CRLF to the one most of its lines use, and leaves a file that is all CRLF alone |
@@ -111,6 +115,11 @@ checked the same way at commit time and in CI.
 `jsconfig*.json`, `appsettings*.json` (ASP.NET Core), anything in `.vscode/` or `.devcontainer/`, and `*.jsonc`.
 prettier still parses them, so broken syntax still fails. Another such file: rename it `.jsonc` if its tool
 allows, or add its path to the hook's `exclude:`.
+
+**Your own markdownlint file adds to the defaults.** A `.markdownlint.yaml` (or `.yml`, `.json`, `.jsonc`) at
+the top of your repository is read as if it began with `extends:` pointing at the bundle's defaults, so it only
+names what it changes (`MD026: false`). Set `extends:` yourself (`extends: null` for none) to replace the
+defaults instead. A `.markdownlint-cli2.*` file, or a `.cjs` / `.mjs` one, is used whole.
 
 **Your own `exclude:`.** The bundle's own skips (lockfiles for prettier, CSV for the fixers, JSON with comments
 for check-json) are in each hook's `files:`, so setting `exclude:` on a hook in your config adds to them instead

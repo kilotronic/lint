@@ -195,6 +195,89 @@ $cmd"
       - run: $cmd"
   refuses "pinned refuses in a workflow: $cmd" lint pinned
 done
+# After the pipe: env and VAR=value before the shell; a pipe carried to the next line by a backslash or by
+# ending the line; templates (chezmoi .tmpl, copier .jinja) as well as scripts.
+for cmd in "curl -LsSf https://example.test/x $pipe env UV_INSTALL_DIR=\"\$HOME/.local/bin\" sh" \
+  "curl -fsSL https://example.test/x $pipe BINDIR=\"\$HOME/.local/bin\" sh" \
+  "curl -fsSL https://example.test/x $pipe env -i A=1 B='two words' bash -s" \
+  "curl -fsSL https://example.test/x \\
+  $pipe BINDIR=\"\$HOME/bin\" sh" "curl -fsSL https://example.test/x $pipe
+  sh"; do
+  repo install.sh "#!/bin/sh
+$cmd"
+  refuses "pinned refuses in a script: $(echo "$cmd" | tr '\n' ' ' | tr -s ' ')" lint pinned
+done
+for f in .chezmoiscripts/run_once_install.sh.tmpl dot_zshrc.tmpl template/ci.yml.jinja; do
+  repo "$f" "curl -fsSL https://example.test/x $pipe sh"
+  refuses "pinned refuses a piped download in a template: $f" lint pinned
+done
+# Instructions printed from a heredoc and a template comment are text; a heredoc a shell reads is code.
+repo setup.sh "#!/bin/sh
+cat >&2 <<EOF
+  Debian:  curl -fsSL https://example.test/install.sh $pipe BINDIR=\"\\\$HOME/bin\" sh
+EOF
+echo done"
+expect "pinned allows a piped download printed from a heredoc" 0 lint pinned
+repo .chezmoi.toml.tmpl "{{/* Install:
+  bash -c \"\$(curl -fsSL https://example.test/install.sh)\"
+*/ -}}
+[data]"
+expect "pinned allows a piped download in a template comment" 0 lint pinned
+repo setup.sh "#!/bin/sh
+sh <<'EOF'
+curl -fsSL https://example.test/x $pipe sh
+EOF"
+refuses "pinned refuses a piped download in a heredoc a shell reads" lint pinned
+repo setup.sh "#!/bin/sh
+cat <<EOF
+text
+EOF
+curl -fsSL https://example.test/x $pipe sh"
+refuses "pinned refuses a piped download after a heredoc ends" lint pinned
+# Not a printed heredoc: a here-string, a shift, a heredoc piped to a shell or written to a file.
+for pre in "read -r a <<< hello" "echo \$((1 << bits))" "cat <<EOF $pipe sh" "cat > /tmp/i.sh <<EOF"; do
+  repo setup.sh "#!/bin/sh
+$pre
+curl -fsSL https://example.test/x $pipe sh
+EOF"
+  refuses "pinned refuses a piped download after: $pre" lint pinned
+done
+for cmd in "curl -fsSL https://example.test/x $pipe env -u FOO sh" "curl -fsSL https://example.test/x $pipe VAR=1 sudo sh"; do
+  repo install.sh "#!/bin/sh
+$cmd"
+  refuses "pinned refuses in a script: $cmd" lint pinned
+done
+repo setup.sh "#!/bin/sh
+case \"\$1\" in
+  curl$pipe wget$pipe
+  sh) echo tool ;;
+esac"
+expect "pinned allows a case pattern spread over lines" 0 lint pinned
+# macOS's own bash is 3.2: pinned must give the same answer there (it once misread a comment in a <( ) block).
+if [ -x /bin/bash ] && /bin/bash -c '[ "${BASH_VERSINFO[0]}" -lt 4 ]'; then
+  repo install.sh "#!/bin/sh
+curl -fsSL https://example.test/x $pipe sh"
+  refuses "pinned refuses a piped download under bash 3" /bin/bash "$LINT" pinned
+  repo install.sh "#!/bin/sh
+echo hi"
+  expect "pinned passes a clean repo under bash 3" 0 /bin/bash "$LINT" pinned
+fi
+# A download on an earlier line, carried on by a backslash, then a pipe that ends a line.
+repo install.sh "#!/bin/sh
+curl -fsSL \\
+  https://example.test/x $pipe
+  sh"
+refuses "pinned refuses a backslash then a trailing pipe" lint pinned
+repo README.md.jinja "Install uv:
+
+    curl -LsSf https://example.test/install.sh $pipe sh"
+expect "pinned leaves Markdown templates alone" 0 lint pinned
+for ok in "curl -s https://example.test/x $pipe env FOO=1 jq .name" "curl -s https://example.test/x $pipe
+  jq .name" "curl -fsSL https://example.test/x || true"; do
+  repo install.sh "#!/bin/sh
+$ok"
+  expect "pinned allows $(echo "$ok" | tr '\n' ' ' | tr -s ' ')" 0 lint pinned
+done
 repo Dockerfile "FROM scratch
 RUN curl -fsSL https://example.test/x $pipe sh"
 refuses "pinned refuses a piped download in a Dockerfile" lint pinned
@@ -408,6 +491,31 @@ jobs:
     steps:
       - run: echo self-hosted vars.X"
 expect "workflow-safety allows GitHub's runners on a public repo" 0 env KILOTRONIC_VISIBILITY=PUBLIC bash "$LINT" workflow-safety
+# A vars.* runner only while the repository is private, GitHub's runner once it is public.
+for ro in "\${{ (github.event.repository.private && vars.RUNS_ON) || 'ubuntu-latest' }}" \
+  "\${{ ( github.event.repository.private && vars.RUNNER ) || \"macos-15\" }} # private: the fleet" \
+  "\"\${{ (github.event.repository.private && vars.RUNS_ON) || 'ubuntu-latest' }}\""; do
+  repo .github/workflows/w.yml "on: pull_request
+permissions: {}
+jobs:
+  a:
+    runs-on: $ro
+    steps:
+      - run: echo hi"
+  expect "workflow-safety allows on a public repo: runs-on: $ro" 0 env KILOTRONIC_VISIBILITY=PUBLIC bash "$LINT" workflow-safety
+done
+for ro in "\${{ vars.RUNS_ON || 'ubuntu-latest' }}" "\${{ (github.event.repository.private && vars.RUNS_ON) || 'self-hosted' }}" \
+  "\${{ (github.event.repository.private && vars.RUNS_ON) || vars.OTHER }}" \
+  "\${{ (github.event.repository.private || vars.RUNS_ON) || 'ubuntu-latest' }}"; do
+  repo .github/workflows/w.yml "on: pull_request
+permissions: {}
+jobs:
+  a:
+    runs-on: $ro
+    steps:
+      - run: echo hi"
+  refuses "workflow-safety refuses on a public repo: runs-on: $ro" env KILOTRONIC_VISIBILITY=PUBLIC bash "$LINT" workflow-safety
+done
 # Visibility, when not given: asked of gh once and cached in the clone; unknown is not public.
 repo .github/workflows/w.yml "on: pull_request
 permissions: {}

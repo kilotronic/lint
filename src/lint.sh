@@ -307,19 +307,50 @@ cmd_pinned() {
     '**/.pre-commit-config.yml' ${EXCLUDE_GLOBS[@]+"${EXCLUDE_GLOBS[@]}"})
   # No download piped into a shell (curl ... | sh, sh -c "$(curl ...)"): it runs whatever the server sends
   # that day. Download, check a checksum, then run. Scripts, workflows, actions, Dockerfiles and Makefiles.
-  local pipe_re='(curl|wget)(.*[^|])?\|[[:space:]]*(sudo([[:space:]]+-[^[:space:]]+)*[[:space:]]+)?(env[[:space:]]+)?([^[:space:]|]*/)?(ba|z|da|k)?sh([[:space:]]|;|\)|$)'
+  # After the pipe: sudo and its flags, env and its flags, and VAR=value assignments may come before the shell.
+  local assign='[A-Za-z_][A-Za-z0-9_]*=("[^"]*"|'"'"'[^'"'"']*'"'"'|[^[:space:]]*)[[:space:]]+'
+  local runner='(sudo|env)([[:space:]]+-u[[:space:]]+[^[:space:]]+|[[:space:]]+-[^[:space:]]+)*[[:space:]]+'
+  local pipe_re='(curl|wget)(.*[^|])?\|[[:space:]]*('"$runner"'|'"$assign"')*([^[:space:]|]*/)?(ba|z|da|k)?sh([[:space:]]|;|\)|$)'
   local subst_re='(ba|z|da|k)?sh[[:space:]]+-c[[:space:]]+["'"'"']?\$\((curl|wget)'
   local procsub_re='(^|[[:space:];&|(])((ba|z|da|k)?sh|source|\.)[[:space:]]+<\([[:space:]]*(curl|wget)'
-  local joined start
+  # Text, not code: the body of a heredoc that `cat` only prints (to stdout or stderr: a line of just
+  # `cat [>&2] <<WORD [>&2]`; one piped on or written to a file may be run), and a template comment
+  # ({{/* */}}, {# #}).
+  local heredoc_re='^[[:space:]]*cat[[:space:]]+([0-9]?>&2[[:space:]]+)?<<-?[[:space:]]*["'"'"']?([A-Za-z_][A-Za-z0-9_]*)["'"'"']?[[:space:]]*([0-9]?>&2)?[[:space:]]*$'
+  local go_open='\{\{-?[[:space:]]*/\*' go_close='\*/[[:space:]]*-?\}\}' jinja_open='\{#' jinja_close='#\}'
+  local joined start until jinja
   while IFS= read -r -d '' f; do
-    n=0 joined="" start=0
+    n=0 joined="" start=0 until="" jinja=""
+    [[ "$f" == *.jinja ]] && jinja=1
     while IFS= read -r line || [ -n "$line" ]; do
       n=$((n + 1))
+      if [ -n "$until" ]; then
+        [[ "$line" =~ $until ]] && until=""
+        continue
+      fi
+      if [[ "$line" =~ $go_open && ! "$line" =~ $go_close ]]; then
+        until=$go_close
+        continue
+      fi
+      if [[ -n "$jinja" && "$line" =~ $jinja_open && ! "$line" =~ $jinja_close ]]; then
+        until=$jinja_close
+        continue
+      fi
+      if [[ "$line" =~ $heredoc_re ]]; then
+        until="^[[:space:]]*${BASH_REMATCH[2]}[[:space:]]*\$"
+        continue
+      fi
       [[ "$line" =~ ^[[:space:]]*# ]] && continue
-      # A line ending in a backslash continues on the next: read them as one (the finding names the first).
+      # A line ending in a backslash, or in a pipe, continues on the next: read them as one (the finding
+      # names the first).
       [ -z "$joined" ] && start=$n
       if [[ "$line" == *\\ ]]; then
         joined="$joined${line%\\} "
+        continue
+      fi
+      # (a pipe after a download, set off by a space: not a case pattern, a table row or `key: |`)
+      if [[ "$joined$line" =~ (curl|wget).*[[:space:]]\|[[:space:]]*$ && ! "$line" =~ \|\|[[:space:]]*$ ]]; then
+        joined="$joined$line "
         continue
       fi
       line="$joined$line" joined=""
@@ -328,8 +359,13 @@ cmd_pinned() {
       echo "$f:$start: a download piped into a shell; download it, check its checksum, then run it"
       bad=1
     done <"$f"
+    # Files read: scripts, templates (chezmoi *.tmpl, copier *.jinja: they become scripts and config when
+    # applied; Markdown templates are documentation), workflows, actions, Dockerfiles and Makefiles. No comments
+    # inside the block below: bash 3.2 misreads a comment inside a process substitution.
   done < <({
     shell_files || true
+    git ls-files -z -- '*.tmpl' '**/*.tmpl' '*.jinja' '**/*.jinja' ':!:*.md.tmpl' ':!:*.md.jinja' \
+      ${EXCLUDE_GLOBS[@]+"${EXCLUDE_GLOBS[@]}"}
     workflow_files
     dockerfiles
     git ls-files -z -- 'Makefile' '**/Makefile' 'GNUmakefile' \
